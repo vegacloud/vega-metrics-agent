@@ -1,4 +1,4 @@
-name: golangci-lint
+name: Scan And Lint
 on:
   workflow_dispatch:
   pull_request:
@@ -14,16 +14,13 @@ jobs:
   golangci:
     name: lint
     runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4.1.1
         id: setup-actions
       - name: Print github ref_name
         run: echo github.ref_name
-      - name: Queue
-        id: queue
-        uses: ahmadnassri/action-workflow-queue@v1.1.4
-        with:
-          timeout: 3000000
       - uses: actions/setup-go@v5
         id: setup-go
         with:
@@ -48,6 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GO111MODULE: on
+      name: ${{ github.ref_name }}
     steps:
       - name: Checkout Source
         id: setup-actions
