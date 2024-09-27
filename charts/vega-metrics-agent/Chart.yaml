@@ -1,0 +1,21 @@
+# Copyright 2024 Vega Cloud, Inc.
+#
+# Use of this software is governed by the Business Source License
+# included in the file licenses/BSL.txt.
+#
+# As of the Change Date specified in that file, in accordance with
+# the Business Source License, use of this software will be governed
+# by the Apache License, Version 2.0, included in the file
+# licenses/APL.txt.
+apiVersion: v2
+name: vega-metrics-agent
+description: A Helm chart for deploying Vega Metrics Agent
+version: 1.0.0-rc2
+appVersion: "1.0.0-rc2"
+type: application
+# This agent requires the metrics-server to be installed in the cluster
+dependencies:
+  - name: metrics-server
+    version: 3.12.1
+    repository: https://kubernetes-sigs.github.io/metrics-server/
+    condition: metrics-server.enabled
