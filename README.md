@@ -147,6 +147,11 @@ We welcome contributions! If you have any suggestions, improvements, or bug repo
 
 This project is licensed under the Business Source License (BSL) 1.1. After the specified change date, it will be governed by the Apache License 2.0.
 
-## Contact
+## Support
+- Enterprise Customers: Support for the Vega Kubernetes Metrics Agent is available through the [Vega Cloud Support Portal](https://support.vegacloud.io/).
+- Communnity and General Public support: Support is best effort. Please file an issue, bug report, or feature request using the [GitHub Issues](
+    https://github.com/vegacloud/vega-metrics-agent/issues).
 
-For any questions or support, reach out to us at [support@vegacloud.io](mailto:support@vegacloud.io).
+
+
+
