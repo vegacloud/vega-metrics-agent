@@ -42,7 +42,7 @@ Before installing, ensure the following:
 
 3. Run the agent:
     ```sh
-    ./metrics-agent --help
+    ./vega-metrics-agent --help
     ```
 
 ### Configuration
