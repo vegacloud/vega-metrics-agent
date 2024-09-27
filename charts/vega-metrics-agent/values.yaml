@@ -41,11 +41,3 @@ env:
 # VEGA_LOG_LEVEL: "DEBUG"
 # START_COLLECTION_NOW: "true"
 # VEGA_POLL_INTERVAL: "1m"
-# This agent requires the metrics-server to be installed in the cluster
-# Use insecureTLS set to true if you are developing locally or have a self-signed certificate
-metrics-server:
-  enabled: true
-  namespace: kube-system
-  extraArgs:
-    #- --kubelet-use-node-status-port
-    - --metric-resolution=15s

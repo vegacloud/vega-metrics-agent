@@ -1,0 +1,14 @@
+apiVersion: v1
+entries:
+  vega-metrics-agent:
+  - apiVersion: v2
+    appVersion: 1.0.0-rc2
+    created: "2024-09-27T11:58:30.901568423-07:00"
+    description: A Helm chart for deploying Vega Metrics Agent
+    digest: 7494c3819f181dabf6bd7dbb45d4797afb6dc5f0a29b762e4d5a8ffe5fce3597
+    name: vega-metrics-agent
+    type: application
+    urls:
+    - vega-metrics-agent-1.0.0-rc2.tgz
+    version: 1.0.0-rc2
+generated: "2024-09-27T11:58:30.901314242-07:00"
