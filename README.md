@@ -31,8 +31,8 @@ Before installing, ensure the following:
 
 1. Clone the repository:
     ```sh
-    git clone https://github.com/vegacloud/kubernetes-metrics-agent.git
-    cd kubernetes-metrics-agent
+    git clone https://github.com/vegacloud/vega-metrics-agent.git
+    cd vega-metrics-agent
     ```
 
 2. Build the project:
