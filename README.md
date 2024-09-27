@@ -95,6 +95,8 @@ The Vega Kubernetes Metrics Agent supports Kubernetes versions up to 1.30 across
 
 You should now see a 'vegacloud' namespace with the agent running as a deployment. 
 
+Please note for our production customers, please follow the instructions located at https://docs.dpz.vegacloud.io/docs/providers/kubernetes
+
 ## Usage
 
 ### Running the Agent
