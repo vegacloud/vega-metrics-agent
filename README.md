@@ -31,7 +31,7 @@ Before installing, ensure the following:
 
 1. Clone the repository:
     ```sh
-    git clone https://github.com/vegacloud/kubernetes-metrics-agent.git
+    git clone https://github.com/vegacloud/vega-metrics-agent.git
     cd kubernetes-metrics-agent
     ```
 
@@ -42,7 +42,7 @@ Before installing, ensure the following:
 
 3. Run the agent:
     ```sh
-    ./metrics-agent --help
+    ./vega-metrics-agent --help
     ```
 
 ### Configuration
@@ -90,8 +90,8 @@ The Vega Kubernetes Metrics Agent supports Kubernetes versions up to 1.30 across
 ### Deploying in Kubernetes using Helm Charts ###
 - Install the kubectl command line tool
 - Install the helm command line tool
-- Modify the values.yaml file in ./deploy/charts/vega-metrics-agent/values.yaml
-- In the charts/vega-metrics-agent directory, run `helm install vega-metrics ./delpoy/charts/vega-metrics-agent` (this sets up the service account, role, and rolebinding for the agent in your cluster)
+- Modify the values.yaml file in ./charts/vega-metrics-agent/values.yaml
+- In the charts/vega-metrics-agent directory, run `helm install vega-metrics ./charts/vega-metrics-agent` (this sets up the service account, role, and rolebinding for the agent in your cluster)
 
 You should now see a 'vegacloud' namespace with the agent running as a deployment. 
 

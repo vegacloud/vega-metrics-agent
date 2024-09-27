@@ -22,7 +22,7 @@ GO_TEST = go test ./...
 GO_VET = go vet ./...
 
 # Docker commands
-DOCKER_BUILD = docker build -f deploy/Dockerfile \
+DOCKER_BUILD = docker build -f Dockerfile \
 	--build-arg golang_version=${GOLANG_VERSION} \
 	--build-arg app_version=${VERSION} \
 	-t ${DOCKER_IMAGE}:${VERSION} .
