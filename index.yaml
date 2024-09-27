@@ -3,7 +3,7 @@ entries:
   vega-metrics-agent:
   - apiVersion: v2
     appVersion: 1.0.0-rc2
-    created: "2024-09-27T12:12:33.549185219-07:00"
+    created: "2024-09-27T12:47:24.03041308-07:00"
     dependencies:
     - condition: metrics-server.enabled
       name: metrics-server
@@ -14,6 +14,6 @@ entries:
     name: vega-metrics-agent
     type: application
     urls:
-    - https://github.com/vegacloud/vega-metrics-agent/charts/vega-metrics-agent-1.0.0-rc2.tgz
+    - https://vegacloud.github.io/vega-metrics-agent/vega-metrics-agent-1.0.0-rc2.tgz
     version: 1.0.0-rc2
-generated: "2024-09-27T12:12:33.548360381-07:00"
+generated: "2024-09-27T12:47:24.029596281-07:00"
