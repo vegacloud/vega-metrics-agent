@@ -1,0 +1,72 @@
+# Copyright 2024 Vega Cloud, Inc.
+#
+# Use of this software is governed by the Business Source License
+# included in the file licenses/BSL.txt.
+#
+# As of the Change Date specified in that file, in accordance with
+# the Business Source License, use of this software will be governed
+# by the Apache License, Version 2.0, included in the file
+# licenses/APL.txt.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-agent
+  namespace: "{{ .Values.namespace }}"
+  labels:
+    app: metrics-agent
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: metrics-agent
+  template:
+    metadata:
+      labels:
+        app: metrics-agent
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      automountServiceAccountToken: true
+      containers:
+        - name: metrics-agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: "{{ .Values.image.pullPolicy }}"
+          args:
+            - 'kubernetes'
+          env:
+            - name: VEGA_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: vega-metrics-agent-secret
+                  key: VEGA_CLIENT_ID
+            - name: VEGA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: vega-metrics-agent-secret
+                  key: VEGA_CLIENT_SECRET
+            - name: VEGA_ORG_SLUG
+              value: "{{ .Values.vega.orgSlug }}"
+            - name: VEGA_CLUSTER_NAME
+              value: "{{ .Values.vega.clusterName }}"
+          {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+          {{- end }}       
+          resources:
+            requests:
+              memory: "{{ .Values.resources.requests.memory }}"
+              cpu: "{{ .Values.resources.requests.cpu }}"
+            limits:
+              memory: "{{ .Values.resources.limits.memory }}"
+              cpu: "{{ .Values.resources.limits.cpu }}"          
+          securityContext:
+            runAsUser: {{ .Values.securityContext.runAsUser }}
+            runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+            allowPrivilegeEscalation: {{ .Values.securityContext.allowPrivilegeEscalation }}
+          livenessProbe:
+            exec:
+              command:
+                - touch
+                - /tmp/healthy
+            initialDelaySeconds: 120
+            periodSeconds: 600
+            timeoutSeconds: 5
