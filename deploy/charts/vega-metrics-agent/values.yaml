@@ -1,0 +1,51 @@
+# Copyright 2024 Vega Cloud, Inc.
+#
+# Use of this software is governed by the Business Source License
+# included in the file licenses/BSL.txt.
+#
+# As of the Change Date specified in that file, in accordance with
+# the Business Source License, use of this software will be governed
+# by the Apache License, Version 2.0, included in the file
+# licenses/APL.txt.
+
+namespace: vegacloud
+serviceAccount:
+  name: vega-metrics-sa
+image:
+  repository: public.ecr.aws/c0f8b9o4/vegacloud/vega-metrics-agent
+  tag: 1.0.0-rc2
+  pullPolicy: Always
+replicaCount: 1
+resources:
+  requests:
+    memory: "2Gi"
+    cpu: "500m"
+  limits:
+    memory: "4Gi"
+    cpu: "1000m"
+securityContext:
+  runAsUser: 10000
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+vega:
+  clientId: "XXXXX" # Log into your portal and visit settings->Client Registration to obtain this
+  clientSecret: "XXXX" # Log into your portal and visit settings->Client Registration to obtain this
+  orgSlug: "XXXX"
+  clusterName: "XXXX"
+env:
+# VEGA_ORG_SLUG: "XXXX" # This will be your portal slug ie https://customerslug.vegacloud.io in this case. customerslug is your ORG_SLUG  
+# VEGA_CLUSTER_NAME: "XXXX" # The name of the cluster you are installing this agent into
+## Optional Variables
+# VEGA_INSECURE: "true" # Set to false if you are using a self-signed certificate or testing local. If we deploy to our test eks cluster, set to false or delete this line
+## Development Variables
+# VEGA_LOG_LEVEL: "DEBUG"
+# START_COLLECTION_NOW: "true"
+# VEGA_POLL_INTERVAL: "1m"
+# This agent requires the metrics-server to be installed in the cluster
+# Use insecureTLS set to true if you are developing locally or have a self-signed certificate
+metrics-server:
+  enabled: true
+  namespace: kube-system
+  extraArgs:
+    #- --kubelet-use-node-status-port
+    - --metric-resolution=15s
