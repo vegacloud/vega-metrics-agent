@@ -34,9 +34,3 @@ vega:
   clusterName: "XXXX"
 env:
 # VEGA_POLL_INTERVAL: "120m" # Default is 60M
-# This agent requires the metrics-server to be installed in the cluster
-metrics-server:
-  enabled: true
-  namespace: kube-system
-  extraArgs:
-    - --metric-resolution=15s
