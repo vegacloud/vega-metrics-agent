@@ -23,73 +23,42 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"k8s.io/client-go/kubernetes"
-	metricsclientset "k8s.io/metrics/pkg/client/clientset/versioned"
 
-	"github.com/vegacloud/kubernetes/metricsagent/pkg/collectors"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
+	"github.com/vegacloud/kubernetes/metricsagent/pkg/informercollectors"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/utils"
 )
 
 // MetricsAgent is the main struct for the metrics agent
 type MetricsAgent struct {
 	config     *config.Config
-	collectors map[string]collectors.Collector
+	collectors map[string]informercollectors.InformationSource
 	uploader   utils.Uploader
 	httpClient *http.Client
 	logger     *logrus.Entry
+	clientSet  kubernetes.Interface
+	stopCh     chan struct{}
 }
 
 // NewMetricsAgent creates a new MetricsAgent
 func NewMetricsAgent(cfg *config.Config,
-	clientset kubernetes.Interface,
-	metricsClientset metricsclientset.Interface,
+	clientSet kubernetes.Interface,
 	logger *logrus.Entry,
-	k8sConfig utils.K8sClientConfig,
 ) (*MetricsAgent, error) {
 	logger = logger.WithField("function", "NewMetricsAgent")
-
-	k8sClientset, ok := clientset.(*kubernetes.Clientset)
-	if !ok {
-		return nil, fmt.Errorf("invalid clientset type: expected *kubernetes.Clientset, got %T", clientset)
-	}
-	// Create an empty map to hold the collectors
-	collectorsMap := make(map[string]collectors.Collector)
-	metricsClientsetImpl, ok := metricsClientset.(*metricsclientset.Clientset)
-	if !ok {
-		return nil, fmt.Errorf(
-			"invalid metrics clientset type: expected *metricsclientset.Clientset, got %T",
-			metricsClientset,
-		)
-	}
-
-	// Initialize the NodeCollector
-	nodeCollector, err := collectors.NewNodeCollector(k8sClientset, metricsClientsetImpl, cfg)
+	stopCh := make(chan struct{})
+	err := informercollectors.FetchAndSaveInformationSources(context.Background(), cfg)
 	if err != nil {
-		logger.Fatalf("Failed to create NodeCollector: %v", err)
+		err = informercollectors.UseDefaultInformationSources()
+		if err != nil {
+			panic(fmt.Sprintf("failed to load default information sources: %v", err))
+		}
 	}
-	collectorsMap["node"] = nodeCollector
-
-	// Initialize the PodCollector (assuming it doesn't return an error)
-	podCollector := collectors.NewPodCollector(k8sClientset, metricsClientsetImpl, cfg)
-	collectorsMap["pod"] = podCollector
-
-	// Initialize the ClusterCollector (assuming it doesn't return an error)
-	clusterCollector := collectors.NewClusterCollector(k8sClientset, cfg, k8sConfig)
-	collectorsMap["cluster"] = clusterCollector
-
-	// Continue initializing other collectors similarly
-	collectorsMap["pv"] = collectors.NewPersistentVolumeCollector(k8sClientset, cfg)
-	collectorsMap["namespace"] = collectors.NewNamespaceCollector(k8sClientset, cfg)
-	collectorsMap["workload"] = collectors.NewWorkloadCollector(k8sClientset, cfg)
-	collectorsMap["network"] = collectors.NewNetworkingCollector(k8sClientset, cfg)
-	collectorsMap["job"] = collectors.NewJobCollector(k8sClientset, cfg)
-	collectorsMap["cronjob"] = collectors.NewCronJobCollector(k8sClientset, cfg)
-	collectorsMap["HPA"] = collectors.NewHPACollector(k8sClientset, cfg)
-	collectorsMap["replicationController"] = collectors.NewReplicationControllerCollector(k8sClientset, cfg)
-
-	collectorsMap["replicasets"] = collectors.NewReplicaSetCollector(k8sClientset, cfg)
-	logger.Debugf("loaded %v collectors", len(collectorsMap))
-
+	informationSources, err := informercollectors.LoadInformers(cfg.InformationSourcesFilePath,
+		clientSet, int(cfg.VegaPollInterval), stopCh)
+	if err != nil {
+		logrus.Fatalf("Error loading information sources: %v", err)
+	}
 	// Initialize the uploader
 	uploader, err := utils.NewS3Uploader(cfg)
 	if err != nil {
@@ -97,12 +66,14 @@ func NewMetricsAgent(cfg *config.Config,
 	}
 	ma := &MetricsAgent{
 		config:     cfg,
-		collectors: collectorsMap,
+		collectors: informationSources,
 		uploader:   uploader,
 		logger:     logger.WithField("component", "MetricsAgent"),
 		httpClient: &http.Client{
 			Timeout: 90 * time.Second, // Set a timeout for HTTP requests
 		},
+		clientSet: clientSet,
+		stopCh:    stopCh,
 	}
 	if cfg.ShouldAgentCheckIn {
 		logrus.Info("Checking in with the metrics server")
@@ -113,7 +84,30 @@ func NewMetricsAgent(cfg *config.Config,
 	return ma, nil
 }
 
-// Run starts the metrics collection and upload process
+func (ma *MetricsAgent) RefetchAndReloadInformationSources(ctx context.Context, clientSet kubernetes.Interface) error {
+	ma.logger.Info("Refetching and reloading information sources")
+	err := informercollectors.FetchAndSaveInformationSources(ctx, ma.config)
+	if err != nil {
+		return fmt.Errorf("error fetching and saving information sources: %w", err)
+	}
+	close(ma.stopCh)
+	// Refetch the information sources
+
+	// Reload the information sources
+	stopCh := make(chan struct{})
+	informationSources, err := informercollectors.LoadInformers(ma.config.InformationSourcesFilePath,
+		clientSet, int(ma.config.VegaPollInterval), stopCh)
+	if err != nil {
+		return fmt.Errorf("error reloading information sources: %w", err)
+	}
+
+	// Update the collectors with the new information sources
+	ma.collectors = informationSources
+	ma.stopCh = stopCh
+	ma.logger.Info("Successfully re-fetched and reloaded information sources")
+	return nil
+}
+
 func (ma *MetricsAgent) Run(ctx context.Context) {
 	// Check if we should start collection immediately
 	if ma.config.StartCollectionNow {
@@ -148,6 +142,9 @@ func (ma *MetricsAgent) Run(ctx context.Context) {
 	ticker := time.NewTicker(ma.config.VegaPollInterval)
 	defer ticker.Stop()
 
+	// Track the last time information sources were updated
+	lastUpdate := time.Now()
+
 	// Run the metrics collection in a loop
 	for {
 		select {
@@ -155,6 +152,19 @@ func (ma *MetricsAgent) Run(ctx context.Context) {
 			ma.logger.Info("Stopping metrics agent")
 			return
 		case <-ticker.C:
+			// Check if it's time to refetch and reload the information sources
+			if time.Since(lastUpdate) > ma.config.AutoUpdateInformationSourcesInterval {
+				ma.logger.Info("Updating information sources")
+				if err := ma.RefetchAndReloadInformationSources(ctx, ma.clientSet); err != nil {
+					ma.logger.WithError(err).Errorf(
+						"Failed to refetch and reload information sources continuing with the "+
+							"current information sources, will retry update in %v",
+						ma.config.AutoUpdateInformationSourcesInterval)
+				} else {
+					lastUpdate = time.Now()
+				}
+			}
+
 			if err := ma.collectAndUploadMetrics(ctx); err != nil {
 				ma.logger.WithError(err).Error("Failed to collect and upload metrics")
 			}
@@ -180,29 +190,29 @@ func (ma *MetricsAgent) collectAndUploadMetrics(ctx context.Context) error {
 			}
 		}()
 	}
-	// Collect metrics from each collector concurrently
-	for name, collector := range ma.collectors {
+	// Collect metrics from each information source concurrently
+	for name, infoSource := range ma.collectors {
 		wg.Add(1)
-		go func(name string, collector collectors.Collector) {
+		go func(name string, infoSource informercollectors.InformationSource) {
 			defer wg.Done()
 
 			// Acquire a slot in the semaphore
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }() // Release the slot when done
 
-			ma.logger.WithField("collector", name).Info("Collecting metrics")
-			collectedMetrics, err := collector.CollectMetrics(ctx)
+			ma.logger.WithField("informationSource", name).Debug("Collecting metrics")
+			collectedMetrics, err := informercollectors.GetInformerDataAsJSON(infoSource)
 			if err != nil {
-				ma.logger.WithField("collector", name).WithError(err).Error("Failed to collect metrics")
+				ma.logger.WithField("informationSource", name).WithError(err).Error("Failed to collect metrics")
 				mu.Lock()
-				combinedErrors = errors.Join(combinedErrors, fmt.Errorf("collector %s: %w", name, err))
+				combinedErrors = errors.Join(combinedErrors, fmt.Errorf("informationSource %s: %w", name, err))
 				mu.Unlock()
 				return
 			}
 			mu.Lock()
 			metrics[name] = collectedMetrics
 			mu.Unlock()
-		}(name, collector)
+		}(name, infoSource)
 	}
 	wg.Wait()
 

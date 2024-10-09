@@ -54,14 +54,14 @@ func getOutOfClusterConfig(ctx context.Context, cfg *config.Config) (*K8sClientC
 
 	if kc := os.Getenv("KUBECONFIG"); kc != "" {
 		kubeconfigPath = kc
-		logrus.Infof("getOutOfClusterConfig: Using KUBECONFIG environment variable: %s", kubeconfigPath)
+		logrus.Debugf("getOutOfClusterConfig: Using KUBECONFIG environment variable: %s", kubeconfigPath)
 	} else {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
 			return nil, fmt.Errorf("getOutOfClusterConfig: unable to determine user's home directory: %v", err)
 		}
 		kubeconfigPath = filepath.Join(homeDir, ".kube", "config")
-		logrus.Infof("getOutOfClusterConfig: Using default kubeconfig path: %s", kubeconfigPath)
+		logrus.Debugf("getOutOfClusterConfig: Using default kubeconfig path: %s", kubeconfigPath)
 	}
 
 	if _, err := os.Stat(kubeconfigPath); os.IsNotExist(err) {

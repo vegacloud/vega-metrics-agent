@@ -23,7 +23,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"k8s.io/client-go/kubernetes"
-	metricsv "k8s.io/metrics/pkg/client/clientset/versioned"
 
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/agent"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
@@ -34,6 +33,7 @@ import (
 var version = "999-snapshot"
 
 func main() {
+
 	time.Local = time.UTC
 
 	rootCmd := &cobra.Command{
@@ -52,9 +52,12 @@ func main() {
 	rootCmd.Flags().Bool("insecure",
 		config.DefaultVegaInsecure,
 		"Insecure TLS (env: VEGA_INSECURE)")
-	rootCmd.Flags().String("poll_interval",
-		string(config.DefaultPollInterval),
-		"Polling interval in minutes (env: VEGA_POLL_INTERVAL)")
+	rootCmd.Flags().Bool("should_agent_check_in",
+		false,
+		"Should agent check in (env: VEGA_SHOULD_AGENT_CHECK_IN)")
+	rootCmd.Flags().Int("poll_interval",
+		int(config.DefaultPollInterval.Seconds()),
+		"Polling interval in seconds (env: VEGA_POLL_INTERVAL)")
 	// Logging configuration
 	rootCmd.Flags().String("log_level",
 		config.DefaultLogLevel,
@@ -64,7 +67,7 @@ func main() {
 		config.DefaultBearerTokenPath,
 		"Bearer token path (env: VEGA_BEARER_TOKEN_PATH)")
 	rootCmd.Flags().String("work_dir", config.DefaultWorkDir, "Work directory (env: VEGA_WORK_DIR)")
-	rootCmd.Flags().Int("max_concurrency", config.DefaultMaxConcurrency, "Max concurrency (env: VEGA_MAX_CONCURRENCY)")
+	rootCmd.Flags().Int("max_concurrency", config.DefaultMaxConcurrency, "Max concurrency")
 
 	if err := viper.BindPFlags(rootCmd.Flags()); err != nil {
 		logrus.Fatalf("Error binding flags: %v", err)
@@ -113,18 +116,13 @@ func runRootCmd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	metricsClientset, err := metricsv.NewForConfig(k8sClientConfig.Config)
-	if err != nil {
-		return fmt.Errorf("failed to create metrics client: %w", err)
-	}
-
 	logger := logrus.WithFields(logrus.Fields{
 		"client_id":    cfg.VegaClientID,
 		"org_slug":     cfg.VegaOrgSlug,
 		"cluster_name": cfg.VegaClusterName,
 	})
 
-	if err := startMetricsAgent(cfg, k8sClientConfig.Clientset, metricsClientset, logger, *k8sClientConfig); err != nil {
+	if err := startMetricsAgent(cfg, k8sClientConfig.Clientset, logger); err != nil {
 		return err
 	}
 
@@ -153,11 +151,10 @@ func initializeKubernetesClients(ctx context.Context, cfg *config.Config) (*util
 
 func startMetricsAgent(cfg *config.Config,
 	clientset kubernetes.Interface,
-	metricsClientset *metricsv.Clientset,
 	logger *logrus.Entry,
-	k8sConfig utils.K8sClientConfig,
 ) error {
-	metricsAgent, err := agent.NewMetricsAgent(cfg, clientset, metricsClientset, logger, k8sConfig)
+
+	metricsAgent, err := agent.NewMetricsAgent(cfg, clientset, logger)
 	if err != nil {
 		return fmt.Errorf("failed to create metrics agent: %w", err)
 	}
@@ -171,7 +168,7 @@ func startMetricsAgent(cfg *config.Config,
 			logger.Error("Health check startup failed")
 			cancel()
 		} else {
-			logger.Info("Health check successful")
+			logger.Debug("Health check successful")
 		}
 	}()
 
