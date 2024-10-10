@@ -68,7 +68,7 @@ func getDefaultMetricsCollectorAPI() string {
 	if os.Getenv("DEV_MODE") == "true" {
 		return "http://localhost:8080"
 	}
-	return "https://api.vegacloud.io/api/metrics"
+	return "https://api.vegacloud.io/metrics"
 }
 
 // getDefaultInformationSourcesURL returns the appropriate InformationSourcesURL based on the DEV_MODE
@@ -76,5 +76,5 @@ func getDefaultInformationSourcesURL() string {
 	if os.Getenv("DEV_MODE") == "true" {
 		return "http://localhost:8080/information-sources"
 	}
-	return "https://api.vegacloud.io/api/metrics/informationSources"
+	return "https://api.vegacloud.io/metrics/informationSources"
 }

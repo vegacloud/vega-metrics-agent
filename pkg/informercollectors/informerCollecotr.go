@@ -1,6 +1,7 @@
 package informercollectors
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -72,7 +73,10 @@ func FetchAndSaveInformationSources(ctx context.Context, cfg *config.Config) err
 	if err != nil {
 		return fmt.Errorf("failed to read response body: %w", err)
 	}
-
+	// Check if data starts with '# informers.yaml'
+	if !bytes.HasPrefix(data, []byte("# informers.yaml")) {
+		return fmt.Errorf("invalid data format: expected '# informers.yaml' at the beginning")
+	}
 	// Write the data to the specified file
 	err = os.WriteFile(cfg.InformationSourcesFilePath, data, 0600)
 	if err != nil {
@@ -243,137 +247,137 @@ informers:
   - type: Core
     version: V1
     resource: Pods
-    whitelist: ["*"]
-    blacklist: [
-      "metadata.managedFields",
-      "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration",
-      "spec.containers.env",
-      "spec.containers.command",
-      "spec.containers.args",
-      "spec.containers.imagePullPolicy",
-      "spec.containers.livenessProbe",
-      "spec.containers.startupProbe",
-      "spec.containers.readinessProbe",
-      "spec.containers.terminationMessagePath",
-      "spec.containers.terminationMessagePolicy",
-      "spec.containers.securityContext",
-      "spec.initContainers.env",
-      "spec.initContainers.command",
-      "spec.initContainers.args",
-      "spec.initContainers.imagePullPolicy",
-      "spec.initContainers.livenessProbe",
-      "spec.initContainers.startupProbe",
-      "spec.initContainers.readinessProbe",
-      "spec.initContainers.terminationMessagePath",
-      "spec.initContainers.terminationMessagePolicy",
-      "spec.initContainers.securityContext"
-    ]
+    whitelist:
+      - "*"
+    blacklist:
+      - "metadata.managedFields"
+      - "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration"
+      - "spec.containers.env"
+      - "spec.containers.command"
+      - "spec.containers.args"
+      - "spec.containers.imagePullPolicy"
+      - "spec.containers.livenessProbe"
+      - "spec.containers.startupProbe"
+      - "spec.containers.readinessProbe"
+      - "spec.containers.terminationMessagePath"
+      - "spec.containers.terminationMessagePolicy"
+      - "spec.containers.securityContext"
+      - "spec.initContainers.env"
+      - "spec.initContainers.command"
+      - "spec.initContainers.args"
+      - "spec.initContainers.imagePullPolicy"
+      - "spec.initContainers.livenessProbe"
+      - "spec.initContainers.startupProbe"
+      - "spec.initContainers.readinessProbe"
+      - "spec.initContainers.terminationMessagePath"
+      - "spec.initContainers.terminationMessagePolicy"
+      - "spec.initContainers.securityContext"
   - type: Apps
     version: V1
     resource: Deployments
-    whitelist: ["*"]
-    blacklist: [
-      "metadata.managedFields",
-      "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration",
-      "spec.template",
-      "spec.replicas",
-      "spec.strategy",
-      "spec.minReadySeconds",
-      "spec.revisionHistoryLimit",
-      "spec.progressDeadlineSeconds"
-    ]
+    whitelist:
+      - "*"
+    blacklist:
+      - "metadata.managedFields"
+      - "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration"
+      - "spec.template"
+      - "spec.replicas"
+      - "spec.strategy"
+      - "spec.minReadySeconds"
+      - "spec.revisionHistoryLimit"
+      - "spec.progressDeadlineSeconds"
   - type: Batch
     version: V1
     resource: Jobs
-    whitelist: ["*"]
-    blacklist: [
-      "metadata.managedFields",
-      "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration",
-      "spec.template",
-      "spec.parallelism",
-      "spec.completions",
-      "spec.activeDeadlineSeconds",
-      "spec.backoffLimit",
-      "spec.manualSelector",
-      "spec.ttlSecondsAfterFinished",
-      "spec.completionMode",
-      "spec.suspend"
-    ]
+    whitelist:
+      - "*"
+    blacklist:
+      - "metadata.managedFields"
+      - "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration"
+      - "spec.template"
+      - "spec.parallelism"
+      - "spec.completions"
+      - "spec.activeDeadlineSeconds"
+      - "spec.backoffLimit"
+      - "spec.manualSelector"
+      - "spec.ttlSecondsAfterFinished"
+      - "spec.completionMode"
+      - "spec.suspend"
   - type: Core
     version: V1
     resource: Services
-    whitelist: ["*"]
-    blacklist: [
-      "metadata.managedFields",
-      "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration",
-      "spec.ports",
-      "spec.clusterIP",
-      "spec.clusterIPs",
-      "spec.type",
-      "spec.externalIPs",
-      "spec.sessionAffinity",
-      "spec.loadBalancerIP",
-      "spec.loadBalancerSourceRanges",
-      "spec.externalName",
-      "spec.externalTrafficPolicy",
-      "spec.healthCheckNodePort",
-      "spec.sessionAffinityConfig",
-      "spec.ipFamilies",
-      "spec.ipFamilyPolicy",
-      "spec.allocateLoadBalancerNodePorts",
-      "spec.loadBalancerClass",
-      "spec.internalTrafficPolicy"
-    ]
+    whitelist:
+      - "*"
+    blacklist:
+      - "metadata.managedFields"
+      - "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration"
+      - "spec.ports"
+      - "spec.clusterIP"
+      - "spec.clusterIPs"
+      - "spec.type"
+      - "spec.externalIPs"
+      - "spec.sessionAffinity"
+      - "spec.loadBalancerIP"
+      - "spec.loadBalancerSourceRanges"
+      - "spec.externalName"
+      - "spec.externalTrafficPolicy"
+      - "spec.healthCheckNodePort"
+      - "spec.sessionAffinityConfig"
+      - "spec.ipFamilies"
+      - "spec.ipFamilyPolicy"
+      - "spec.allocateLoadBalancerNodePorts"
+      - "spec.loadBalancerClass"
+      - "spec.internalTrafficPolicy"
   - type: Core
     version: V1
     resource: Nodes
-    whitelist: ["*"]
-    blacklist: [
-      "metadata.managedFields",
-      "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration"
-    ]
+    whitelist:
+      - "*"
+    blacklist:
+      - "metadata.managedFields"
+      - "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration"
   - type: Apps
     version: V1
     resource: ReplicaSets
-    whitelist: ["*"]
-    blacklist: [
-      "metadata.managedFields",
-      "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration",
-      "spec.replicas",
-      "spec.template",
-      "spec.minReadySeconds"
-    ]
+    whitelist:
+      - "*"
+    blacklist:
+      - "metadata.managedFields"
+      - "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration"
+      - "spec.replicas"
+      - "spec.template"
+      - "spec.minReadySeconds"
   - type: Core
     version: V1
     resource: PersistentVolumes
-    whitelist: ["*"]
-    blacklist: [
-      "metadata.managedFields",
-      "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration"
-    ]
+    whitelist:
+      - "*"
+    blacklist:
+      - "metadata.managedFields"
+      - "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration"
   - type: Core
     version: V1
     resource: PersistentVolumeClaims
-    whitelist: ["*"]
-    blacklist: [
-      "metadata.managedFields",
-      "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration"
-    ]
+    whitelist:
+      - "*"
+    blacklist:
+      - "metadata.managedFields"
+      - "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration"
   - type: Core
     version: V1
     resource: Namespaces
-    whitelist: ["*"]
-    blacklist: [
-      "metadata.managedFields"
-    ]
+    whitelist:
+      - "*"
+    blacklist:
+      - "metadata.managedFields"
   - type: Batch
     version: V1
     resource: CronJobs
-    whitelist: ["*"]
-    blacklist: [
-      "metadata.managedFields",
-      "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration",
-      "spec"
-    ]
-	`
+    whitelist:
+      - "*"
+    blacklist:
+      - "metadata.managedFields"
+      - "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration"
+      - "spec"
+    `
 )
