@@ -10,12 +10,7 @@
 apiVersion: v2
 name: vega-metrics-agent
 description: A Helm chart for deploying Vega Metrics Agent
-version: 1.0.0
-appVersion: "1.0.0"
+version: 1.0.1
+appVersion: "1.0.1"
 type: application
-# This agent requires the metrics-server to be installed in the cluster
-dependencies:
-  - name: metrics-server
-    version: 3.12.1
-    repository: https://kubernetes-sigs.github.io/metrics-server/
-    condition: metrics-server.enabled
+

@@ -184,7 +184,7 @@ func (u *S3Uploader) UploadMetrics(ctx context.Context, metrics map[string]inter
 				return
 			}
 
-			logrus.Infof("Successfully uploaded metrics for collector %s to S3", collectorName)
+			logrus.Debugf("Successfully uploaded metrics for collector %s to S3", collectorName)
 		}(collectorName, data)
 	}
 

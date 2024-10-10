@@ -29,17 +29,25 @@ func LoadConfig() (*Config, error) {
 	// Set default values
 	setDefaults()
 
-	if os.Getenv("START_COLLECTION_NOW") == "true" {
-		viper.Set("start_collection_now", true)
+	// Load environment variables
+	envVars := map[string]string{
+		"START_COLLECTION_NOW": "start_collection_now",
+		"AGENT_ID":             "agent_id",
+		"AUTO_UPDATE_INFORMATION_SOURCES_INTERVAL": "auto_update_information_sources_interval",
+		"LOG_LEVEL":                     "log_level",
+		"INFORMATION_SOURCES_URL":       "information_sources_url",
+		"INFORMATION_SOURCES_FILE_PATH": "information_sources_file_path",
 	}
-	if os.Getenv("SAVE_LOCAL") == "true" {
-		viper.Set("save_local", true)
-	}
-	if os.Getenv("AGENT_ID") != "" {
-		viper.Set("agent_id", os.Getenv("AGENT_ID"))
-	}
-	if os.Getenv("SHOULD_AGENT_CHECK_IN") != "" {
-		viper.Set("should_agent_check_in", os.Getenv("SHOULD_AGENT_CHECK_IN"))
+
+	for envVar, viperKey := range envVars {
+		if value := os.Getenv(envVar); value != "" {
+			if viperKey == "auto_update_information_sources_interval" || viperKey == "poll_interval" {
+				interval, _ := time.ParseDuration(value)
+				viper.Set(viperKey, interval)
+			} else {
+				viper.Set(viperKey, value)
+			}
+		}
 	}
 	if os.Getenv("METRICS_COLLECTOR_API") != "" {
 		viper.Set("metrics_collector_api", os.Getenv("METRICS_COLLECTOR_API"))
@@ -93,4 +101,7 @@ func setDefaults() {
 	viper.SetDefault("max_concurrency", DefaultMaxConcurrency)
 	viper.SetDefault("agent_id", uuid.New().String())
 	viper.SetDefault("should_agent_check_in", DefaultShouldAgentCheckIn)
+	viper.SetDefault("information_sources_url", DefaultInformationSourcesURL)
+	viper.SetDefault("information_sources_file_path", DefaultInformationSourcesFilePath)
+	viper.SetDefault("auto_update_information_sources_interval", DefaultAutoUpdateInformationSourcesInterval)
 }

@@ -43,7 +43,10 @@ RUN apk update && \
     apk add --no-cache git ca-certificates curl bash
 
 # Copy the binary from the builder stage
-COPY --from=builder /app/vega-metrics-agent /vega-metrics-agent
-
+RUN mkdir -p /app
+COPY --from=builder /app/vega-metrics-agent /app/vega-metrics-agent
+WORKDIR /app
+RUN chmod 777 /app
 # Set the entrypoint
-ENTRYPOINT ["/vega-metrics-agent"]
+ENTRYPOINT ["/app/vega-metrics-agent"]
+
