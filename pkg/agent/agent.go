@@ -189,6 +189,16 @@ func (ma *MetricsAgent) collectAndUploadMetrics(ctx context.Context) error {
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }() // Release the slot when done
 
+			// Recover from panic if any collector panics
+			defer func() {
+				if r := recover(); r != nil {
+					ma.logger.WithField("collector", name).Errorf("Collector panicked: %v", r)
+					mu.Lock()
+					combinedErrors = errors.Join(combinedErrors, fmt.Errorf("collector %s panicked: %v", name, r))
+					mu.Unlock()
+				}
+			}()
+
 			ma.logger.WithField("collector", name).Info("Collecting metrics")
 			collectedMetrics, err := collector.CollectMetrics(ctx)
 			if err != nil {
