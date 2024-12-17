@@ -44,12 +44,8 @@ func NewPodCollector(clientset *kubernetes.Clientset, cfg *config.Config) *PodCo
 
 	// Initialize HTTP client with reasonable defaults
 	httpClient := &http.Client{
-		Timeout: time.Second * 10,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: cfg.VegaInsecure,
-			},
-		},
+		Timeout:   time.Second * 10,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.VegaInsecure}}, // #nosec G402
 	}
 
 	logrus.Debug("PodCollector created successfully")
@@ -314,12 +310,8 @@ func (pc *PodCollector) getPodMetrics(ctx context.Context, pod *v1.Pod) (*models
 	if pc.httpClient == nil {
 		logrus.Warn("HTTP client not initialized, creating default client")
 		pc.httpClient = &http.Client{
-			Timeout: time.Second * 10,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: pc.config.VegaInsecure,
-				},
-			},
+			Timeout:   time.Second * 10,
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: pc.config.VegaInsecure}}, // #nosec G402
 		}
 	}
 

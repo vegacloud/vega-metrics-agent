@@ -60,11 +60,7 @@ func NewMetricsAgent(cfg *config.Config,
 		return nil, fmt.Errorf("failed to read service account token: %w", err)
 	}
 
-	clientConfig.Clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: cfg.VegaInsecure,
-		},
-	}
+	clientConfig.Clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.VegaInsecure}} // #nosec G402
 
 	clientConfig.Clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
 		string(token),

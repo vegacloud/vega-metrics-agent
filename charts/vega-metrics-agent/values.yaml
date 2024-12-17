@@ -13,7 +13,7 @@ serviceAccount:
   name: vega-metrics-sa
 image:
   repository: public.ecr.aws/c0f8b9o4/vegacloud/vega-metrics-agent
-  tag: 1.1.0-rc
+  tag: 1.1.0-rc1
   pullPolicy: Always
 replicaCount: 1
 resources:
