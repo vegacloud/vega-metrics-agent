@@ -15,16 +15,15 @@ package collectors
 import (
 	"context"
 	"fmt"
-	"reflect"
 
 	"github.com/sirupsen/logrus"
-	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
-	"github.com/vegacloud/kubernetes/metricsagent/pkg/models"
-	"github.com/vegacloud/kubernetes/metricsagent/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
+	"github.com/vegacloud/kubernetes/metricsagent/pkg/models"
 )
 
 // NetworkingCollector collects metrics from Kubernetes networking resources.
@@ -261,133 +260,93 @@ func (nc *NetworkingCollector) collectNetworkPolicyMetrics(ctx context.Context) 
 	logrus.Debugf("Successfully listed %d network policies", len(networkPolicies.Items))
 
 	metrics := make([]models.NetworkPolicyMetrics, 0, len(networkPolicies.Items))
-	errors := make([]error, 0)
+
 	for _, policy := range networkPolicies.Items {
-
-		metric, err := nc.parseNetworkPolicyMetrics(policy)
-		if err != nil {
-			logrus.Warnf("Failed to parse network policy metrics: %v", err)
-			errors = append(errors, err)
-			continue
-		}
-		metrics = append(metrics, metric)
-
+		metrics = append(metrics, nc.parseNetworkPolicyMetrics(policy))
 	}
 
 	return metrics, nil
 }
 
-// is there a cleaner way to do this
-func validatePolicy(policy networkingv1.NetworkPolicy) error {
-	// Define the required fields for a valid NetworkPolicy
-	mustHave := []string{"Name", "Namespace", "Labels", "Annotations", "Spec"}
-
-	// Use reflection to check if each required field is present in the policy
-	val := reflect.ValueOf(policy)
-	for _, field := range mustHave {
-		if utils.HasField(val.Interface(), field) != nil {
-			return fmt.Errorf("missing required field: %s", field)
-		}
-	}
-
-	// If all required fields are present, return nil indicating no error
-	return nil
-}
-
-func (nc *NetworkingCollector) parseNetworkPolicyMetrics(policy networkingv1.NetworkPolicy) (metrics models.NetworkPolicyMetrics, err error) {
-	matchLabels := make(map[string]string)
-	if utils.HasField(policy.Spec, "PodSelector") == nil {
-		matchLabels = policy.Spec.PodSelector.MatchLabels
-	}
-	err = validatePolicy(policy)
-	if err != nil {
-		return metrics, fmt.Errorf("invalid network policy: %w", err)
-	}
-	metrics = models.NetworkPolicyMetrics{
+func (nc *NetworkingCollector) parseNetworkPolicyMetrics(policy networkingv1.NetworkPolicy) models.NetworkPolicyMetrics {
+	metrics := models.NetworkPolicyMetrics{
 		Name:        policy.Name,
 		Namespace:   policy.Namespace,
 		Labels:      policy.Labels,
 		Annotations: policy.Annotations,
-		PodSelector: matchLabels,
+		PodSelector: policy.Spec.PodSelector.MatchLabels,
 	}
-	err = utils.HasField(policy.Spec, "PolicyTypes")
-	if err == nil {
 
-		// Parse policy types
-		for _, pType := range policy.Spec.PolicyTypes {
-			metrics.PolicyTypes = append(metrics.PolicyTypes, string(pType))
-		}
+	// Parse policy types
+	for _, pType := range policy.Spec.PolicyTypes {
+		metrics.PolicyTypes = append(metrics.PolicyTypes, string(pType))
 	}
-	err = utils.HasField(policy.Spec, "Ingress")
+
 	// Parse ingress rules
-	if err == nil {
-		for _, rule := range policy.Spec.Ingress {
-			ingressRule := models.NetworkPolicyIngressRule{}
+	for _, rule := range policy.Spec.Ingress {
+		ingressRule := models.NetworkPolicyIngressRule{}
 
-			// Parse ports
-			for _, port := range rule.Ports {
-				ingressRule.Ports = append(ingressRule.Ports, models.NetworkPolicyPort{
-					Protocol: string(*port.Protocol),
-					Port:     port.Port.IntVal,
-				})
-			}
-
-			// Parse from rules
-			for _, from := range rule.From {
-				peer := models.NetworkPolicyPeer{}
-				if from.PodSelector != nil {
-					peer.PodSelector = from.PodSelector.MatchLabels
-				}
-				if from.NamespaceSelector != nil {
-					peer.NamespaceSelector = from.NamespaceSelector.MatchLabels
-				}
-				if from.IPBlock != nil {
-					peer.IPBlock = &models.IPBlock{
-						CIDR:   from.IPBlock.CIDR,
-						Except: from.IPBlock.Except,
-					}
-				}
-				ingressRule.From = append(ingressRule.From, peer)
-			}
-
-			metrics.Ingress = append(metrics.Ingress, ingressRule)
+		// Parse ports
+		for _, port := range rule.Ports {
+			ingressRule.Ports = append(ingressRule.Ports, models.NetworkPolicyPort{
+				Protocol: string(*port.Protocol),
+				Port:     port.Port.IntVal,
+			})
 		}
+
+		// Parse from rules
+		for _, from := range rule.From {
+			peer := models.NetworkPolicyPeer{}
+			if from.PodSelector != nil {
+				peer.PodSelector = from.PodSelector.MatchLabels
+			}
+			if from.NamespaceSelector != nil {
+				peer.NamespaceSelector = from.NamespaceSelector.MatchLabels
+			}
+			if from.IPBlock != nil {
+				peer.IPBlock = &models.IPBlock{
+					CIDR:   from.IPBlock.CIDR,
+					Except: from.IPBlock.Except,
+				}
+			}
+			ingressRule.From = append(ingressRule.From, peer)
+		}
+
+		metrics.Ingress = append(metrics.Ingress, ingressRule)
 	}
+
 	// Parse egress rules
-	err = utils.HasField(policy.Spec, "Egress")
-	if err != nil {
-		for _, rule := range policy.Spec.Egress {
-			egressRule := models.NetworkPolicyEgressRule{}
+	for _, rule := range policy.Spec.Egress {
+		egressRule := models.NetworkPolicyEgressRule{}
 
-			// Parse ports
-			for _, port := range rule.Ports {
-				egressRule.Ports = append(egressRule.Ports, models.NetworkPolicyPort{
-					Protocol: string(*port.Protocol),
-					Port:     port.Port.IntVal,
-				})
-			}
-
-			// Parse to rules
-			for _, to := range rule.To {
-				peer := models.NetworkPolicyPeer{}
-				if to.PodSelector != nil {
-					peer.PodSelector = to.PodSelector.MatchLabels
-				}
-				if to.NamespaceSelector != nil {
-					peer.NamespaceSelector = to.NamespaceSelector.MatchLabels
-				}
-				if to.IPBlock != nil {
-					peer.IPBlock = &models.IPBlock{
-						CIDR:   to.IPBlock.CIDR,
-						Except: to.IPBlock.Except,
-					}
-				}
-				egressRule.To = append(egressRule.To, peer)
-			}
-
-			metrics.Egress = append(metrics.Egress, egressRule)
+		// Parse ports
+		for _, port := range rule.Ports {
+			egressRule.Ports = append(egressRule.Ports, models.NetworkPolicyPort{
+				Protocol: string(*port.Protocol),
+				Port:     port.Port.IntVal,
+			})
 		}
+
+		// Parse to rules
+		for _, to := range rule.To {
+			peer := models.NetworkPolicyPeer{}
+			if to.PodSelector != nil {
+				peer.PodSelector = to.PodSelector.MatchLabels
+			}
+			if to.NamespaceSelector != nil {
+				peer.NamespaceSelector = to.NamespaceSelector.MatchLabels
+			}
+			if to.IPBlock != nil {
+				peer.IPBlock = &models.IPBlock{
+					CIDR:   to.IPBlock.CIDR,
+					Except: to.IPBlock.Except,
+				}
+			}
+			egressRule.To = append(egressRule.To, peer)
+		}
+
+		metrics.Egress = append(metrics.Egress, egressRule)
 	}
 
-	return
+	return metrics
 }
