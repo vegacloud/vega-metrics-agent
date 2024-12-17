@@ -36,6 +36,19 @@ type WorkloadCollector struct {
 
 // NewWorkloadCollector creates a new WorkloadCollector.
 func NewWorkloadCollector(clientset *kubernetes.Clientset, cfg *config.Config) *WorkloadCollector {
+	// logrus.Debug("Starting WorkloadCollector")
+	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
+	// 		TLSClientConfig: &tls.Config{
+	// 			InsecureSkipVerify: cfg.VegaInsecure,
+	// 		},
+	// 	}
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
+	// 		string(token),
+	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
+	// 	)
+	// }
+	logrus.Debug("WorkloadCollector created successfully")
 	return &WorkloadCollector{
 		clientset: clientset,
 		config:    cfg,

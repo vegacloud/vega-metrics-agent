@@ -14,6 +14,7 @@ package collectors
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
@@ -39,9 +40,23 @@ type PodCollector struct {
 
 // NewPodCollector creates a new PodCollector
 func NewPodCollector(clientset *kubernetes.Clientset, cfg *config.Config) *PodCollector {
+	logrus.Debug("Starting PodCollector")
+
+	// Initialize HTTP client with reasonable defaults
+	httpClient := &http.Client{
+		Timeout: time.Second * 10,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: cfg.VegaInsecure,
+			},
+		},
+	}
+
+	logrus.Debug("PodCollector created successfully")
 	return &PodCollector{
-		clientset: clientset,
-		config:    cfg,
+		clientset:  clientset,
+		config:     cfg,
+		httpClient: httpClient,
 	}
 }
 
@@ -261,10 +276,25 @@ func (pc *PodCollector) collectSinglePodMetrics(ctx context.Context, pod v1.Pod)
 }
 
 func (pc *PodCollector) getPodMetrics(ctx context.Context, pod *v1.Pod) (*models.PodMetrics, error) {
+	// Initialize empty metrics structure
+	metrics := &models.PodMetrics{
+		Name:       pod.Name,
+		Namespace:  pod.Namespace,
+		Usage:      models.ResourceMetrics{},
+		Containers: make([]models.ContainerMetrics, 0),
+	}
+
+	// Skip metrics collection if pod is not running on a node
+	if pod.Spec.NodeName == "" {
+		logrus.Debugf("Pod %s/%s is not scheduled on any node, skipping metrics collection", pod.Namespace, pod.Name)
+		return metrics, nil
+	}
+
 	// Get node internal IP where the pod is running
 	node, err := pc.clientset.CoreV1().Nodes().Get(ctx, pod.Spec.NodeName, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get node info: %w", err)
+		logrus.Warnf("Failed to get node info for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		return metrics, nil
 	}
 
 	var nodeAddress string
@@ -275,26 +305,47 @@ func (pc *PodCollector) getPodMetrics(ctx context.Context, pod *v1.Pod) (*models
 		}
 	}
 
+	if nodeAddress == "" {
+		logrus.Warnf("No internal IP found for node %s", pod.Spec.NodeName)
+		return metrics, nil
+	}
+
+	// Ensure HTTP client exists
+	if pc.httpClient == nil {
+		logrus.Warn("HTTP client not initialized, creating default client")
+		pc.httpClient = &http.Client{
+			Timeout: time.Second * 10,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: pc.config.VegaInsecure,
+				},
+			},
+		}
+	}
+
 	// Construct URL for kubelet metrics
 	metricsURL := fmt.Sprintf("https://%s:10250/metrics/resource", nodeAddress)
 
 	// Create request
 	req, err := http.NewRequestWithContext(ctx, "GET", metricsURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		logrus.Warnf("Failed to create request for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		return metrics, nil
 	}
 
 	// Get bearer token from service account
 	token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
 	if err != nil {
-		return nil, fmt.Errorf("failed to read service account token: %w", err)
+		logrus.Warnf("Failed to read service account token: %v", err)
+		return metrics, nil
 	}
 	req.Header.Set("Authorization", "Bearer "+string(token))
 
 	// Make request
 	resp, err := pc.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get metrics from kubelet: %w", err)
+		logrus.Warnf("Failed to get metrics from kubelet for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		return metrics, nil
 	}
 	defer resp.Body.Close()
 
@@ -302,15 +353,8 @@ func (pc *PodCollector) getPodMetrics(ctx context.Context, pod *v1.Pod) (*models
 	var parser expfmt.TextParser
 	metricFamilies, err := parser.TextToMetricFamilies(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse metrics: %w", err)
-	}
-
-	// Create pod metrics object
-	metrics := &models.PodMetrics{
-		Name:       pod.Name,
-		Namespace:  pod.Namespace,
-		Usage:      models.ResourceMetrics{},
-		Containers: make([]models.ContainerMetrics, 0),
+		logrus.Warnf("Failed to parse metrics for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		return metrics, nil
 	}
 
 	containerMetrics := make(map[string]*models.ContainerMetrics)

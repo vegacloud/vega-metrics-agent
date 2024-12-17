@@ -34,12 +34,24 @@ type NetworkingCollector struct {
 
 // NewNetworkingCollector creates a new NetworkingCollector.
 func NewNetworkingCollector(clientset *kubernetes.Clientset, cfg *config.Config) *NetworkingCollector {
-	collector := &NetworkingCollector{
+	// logrus.Debug("Starting NetworkingCollector")
+	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
+	// 		TLSClientConfig: &tls.Config{
+	// 			InsecureSkipVerify: cfg.VegaInsecure,
+	// 		},
+	// 	}
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
+	// 		string(token),
+	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
+	// 	)
+	// }
+	logrus.Debug("NetworkingCollector created successfully")
+	return &NetworkingCollector{
 		clientset: clientset,
 		config:    cfg,
 	}
-	logrus.Debug("NetworkingCollector created successfully")
-	return collector
+
 }
 
 // CollectMetrics collects metrics from Kubernetes networking resources.

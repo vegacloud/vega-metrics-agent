@@ -12,13 +12,13 @@ namespace: vegacloud
 serviceAccount:
   name: vega-metrics-sa
 image:
-  repository: vega-metrics-agent # Do make alldev then push to a private ecr repo to use
-  tag: 1.0.1-dev10   # DO A make alldev to build this then push to a private ecr repo to use
-  pullPolicy: IfNotPresent
+  repository: public.ecr.aws/c0f8b9o4/vegacloud/vega-metrics-agent
+  tag: 1.1.0-rc
+  pullPolicy: Always
 replicaCount: 1
 resources:
   requests:
-    memory: "1Gi"
+    memory: "2Gi"
     cpu: "500m"
   limits:
     memory: "4Gi"
@@ -28,10 +28,12 @@ securityContext:
   runAsNonRoot: true
   allowPrivilegeEscalation: false
 vega:
-  clientId: ""
-  clientSecret: ""
-  orgSlug: "vega"
-  clusterName: "test-cluster"
+  clientId: "XXXXX" # Log into your portal and visit settings->Client Registration to obtain this
+  clientSecret: "XXXX" # Log into your portal and visit settings->Client Registration to obtain this
+  orgSlug: "XXXX"
+  clusterName: "XXXX"
 env:
-  START_COLLECTION_NOW: true
+  # For production, you should be using certificates internal to your cluster. 
+  # We put this by default becuase most k8s clusters are not using tls certs internally.
   VEGA_INSECURE: true
+# VEGA_POLL_INTERVAL: "120m" # Default is 60M

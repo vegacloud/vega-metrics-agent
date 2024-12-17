@@ -34,12 +34,24 @@ type HPACollector struct {
 
 // NewHPACollector creates a new HPACollector.
 func NewHPACollector(clientset *kubernetes.Clientset, cfg *config.Config) *HPACollector {
-	collector := &HPACollector{
+	// logrus.Debug("Starting HPACollector")
+	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
+	// 		TLSClientConfig: &tls.Config{
+	// 			InsecureSkipVerify: cfg.VegaInsecure,
+	// 		},
+	// 	}
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
+	// 		string(token),
+	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
+	// 	)
+	// }
+	logrus.Debug("HPACollector created successfully")
+	return &HPACollector{
 		clientset: clientset,
 		config:    cfg,
 	}
-	logrus.Debug("HPACollector created successfully")
-	return collector
+
 }
 
 // CollectMetrics collects metrics from Kubernetes horizontal pod autoscalers.

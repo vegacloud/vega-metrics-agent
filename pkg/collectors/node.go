@@ -42,42 +42,33 @@ import (
 type NodeCollector struct {
 	clientset *kubernetes.Clientset
 	config    *config.Config
-	// bearerToken string
-	//httpClient *http.Client
 }
 
 // NewNodeCollector initializes a new NodeCollector.
 func NewNodeCollector(
 	clientset *kubernetes.Clientset,
 	cfg *config.Config,
-) (*NodeCollector, error) {
-	nc := &NodeCollector{
+) *NodeCollector {
+	// Log that we are starting the NodeCollector
+	// logrus.Debug("Starting NodeCollector")
+
+	// // Check if we have a token
+	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
+	// 		TLSClientConfig: &tls.Config{
+	// 			InsecureSkipVerify: cfg.VegaInsecure,
+	// 		},
+	// 	}
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
+	// 		string(token),
+	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
+	// 	)
+	// }
+	logrus.Debug("NodeCollector initialized successfully")
+	return &NodeCollector{
 		clientset: clientset,
 		config:    cfg,
 	}
-
-	// // Get bearer token
-	// token, err := nc.getBearerToken()
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to get bearer token: %w", err)
-	// }
-	// nc.bearerToken = token
-	// logrus.Debug("Successfully retrieved bearer token")
-
-	// // Create HTTP client
-	// transport := &http.Transport{
-	// 	TLSClientConfig: &tls.Config{
-	// 		InsecureSkipVerify: cfg.VegaInsecure, //#nosec this is only off for local testing and will be true in prod.
-	// 	},
-	// }
-
-	// nc.httpClient = &http.Client{
-	// 	Timeout:   10 * time.Second,
-	// 	Transport: transport,
-	// }
-	logrus.Debug("HTTP client created successfully")
-
-	return nc, nil
 }
 
 // CollectMetrics collects metrics for all nodes
@@ -684,17 +675,35 @@ func (nc *NodeCollector) collectNodeTaintsAndTolerations(node v1.Node) []models.
 }
 
 func (nc *NodeCollector) collectNodeLease(ctx context.Context, nodeName string) (*models.NodeLease, error) {
-	lease, err := nc.clientset.CoordinationV1().Leases("kube-node-lease").Get(ctx, nodeName, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
+	// If anything fails, log it and return empty lease
+	if nc == nil || nc.clientset == nil {
+		logrus.Warn("node collector or clientset is nil")
+		return &models.NodeLease{}, nil
 	}
 
-	return &models.NodeLease{
-		HolderIdentity:       *lease.Spec.HolderIdentity,
-		LeaseDurationSeconds: *lease.Spec.LeaseDurationSeconds,
-		AcquireTime:          &lease.Spec.AcquireTime.Time,
-		RenewTime:            &lease.Spec.RenewTime.Time,
-	}, nil
+	lease, err := nc.clientset.CoordinationV1().Leases("kube-node-lease").Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		logrus.WithError(err).Debug("failed to get node lease")
+		return &models.NodeLease{}, nil
+	}
+
+	result := &models.NodeLease{}
+
+	// Safely get values, defaulting to empty/zero values if nil
+	if lease.Spec.HolderIdentity != nil {
+		result.HolderIdentity = *lease.Spec.HolderIdentity
+	}
+	if lease.Spec.LeaseDurationSeconds != nil {
+		result.LeaseDurationSeconds = *lease.Spec.LeaseDurationSeconds
+	}
+	if lease.Spec.AcquireTime != nil {
+		result.AcquireTime = &lease.Spec.AcquireTime.Time
+	}
+	if lease.Spec.RenewTime != nil {
+		result.RenewTime = &lease.Spec.RenewTime.Time
+	}
+
+	return result, nil
 }
 
 func (nc *NodeCollector) collectExtendedResources(node v1.Node) map[string]models.ExtendedResource {
@@ -768,9 +777,8 @@ func (nc *NodeCollector) collectVolumeHealthMetrics(ctx context.Context, node *v
 }
 
 func (nc *NodeCollector) collectVolumeAttachmentMetrics(ctx context.Context, nodeName string) ([]models.VolumeAttachmentMetrics, error) {
-	attachments, err := nc.clientset.StorageV1().VolumeAttachments().List(ctx, metav1.ListOptions{
-		FieldSelector: fmt.Sprintf("spec.nodeName=%s", nodeName),
-	})
+	// Get all volume attachments and filter by node name in memory
+	attachments, err := nc.clientset.StorageV1().VolumeAttachments().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -778,6 +786,11 @@ func (nc *NodeCollector) collectVolumeAttachmentMetrics(ctx context.Context, nod
 	var metrics []models.VolumeAttachmentMetrics
 
 	for _, attachment := range attachments.Items {
+		// Filter for attachments matching our node
+		if attachment.Spec.NodeName != nodeName {
+			continue
+		}
+
 		metric := models.VolumeAttachmentMetrics{
 			VolumeName: func() string {
 				if attachment.Spec.Source.PersistentVolumeName != nil {
@@ -785,8 +798,13 @@ func (nc *NodeCollector) collectVolumeAttachmentMetrics(ctx context.Context, nod
 				}
 				return ""
 			}(),
-			AttachmentState: string(attachment.Status.AttachmentMetadata["attached"]),
-			AttachTime:      attachment.CreationTimestamp.Time,
+			AttachmentState: func() string {
+				if attachment.Status.Attached {
+					return "attached"
+				}
+				return "detached"
+			}(),
+			AttachTime: attachment.CreationTimestamp.Time,
 		}
 
 		metrics = append(metrics, metric)
@@ -981,11 +999,10 @@ func (nc *NodeCollector) CollectNodeMetrics(ctx context.Context, node *v1.Node) 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if lease, err := nc.collectNodeLease(ctx, node.Name); err == nil {
-			safeUpdate(func() { metrics.Lease = lease })
-		} else {
-			errChan <- fmt.Errorf("node lease: %w", err)
-		}
+		lease, _ := nc.collectNodeLease(ctx, node.Name) // Ignore error as we always return a value
+		safeUpdate(func() {
+			metrics.Lease = lease
+		})
 	}()
 
 	// Wait for all collectors to complete

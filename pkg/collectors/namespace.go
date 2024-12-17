@@ -34,6 +34,18 @@ type NamespaceCollector struct {
 
 // NewNamespaceCollector creates a new NamespaceCollector.
 func NewNamespaceCollector(clientset *kubernetes.Clientset, cfg *config.Config) *NamespaceCollector {
+	// logrus.Debug("Starting NamespaceCollector")
+	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
+	// 		TLSClientConfig: &tls.Config{
+	// 			InsecureSkipVerify: cfg.VegaInsecure,
+	// 		},
+	// 	}
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
+	// 		string(token),
+	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
+	// 	)
+	// }
 	logrus.Debug("Creating new NamespaceCollector")
 	return &NamespaceCollector{
 		clientset: clientset,

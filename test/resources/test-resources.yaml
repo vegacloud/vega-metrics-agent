@@ -1,0 +1,395 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: test-metrics
+  labels:
+    environment: test
+    purpose: metrics-collection
+---
+# A ResourceQuota to test namespace-level quota metrics
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: test-quota
+  namespace: test-metrics
+spec:
+  hard:
+    pods: "10"
+    requests.cpu: "2"
+    requests.memory: "1Gi"
+    limits.cpu: "4"
+    limits.memory: "2Gi"
+---
+# A LimitRange to test namespace-level limit metrics
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: test-limitrange
+  namespace: test-metrics
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+      default:
+        cpu: "200m"
+        memory: "256Mi"
+      max:
+        cpu: "500m"
+        memory: "512Mi"
+---
+# A ConfigMap to test presence of config-related metrics (labels/annotations, etc.)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-config
+  namespace: test-metrics
+  labels:
+    app: test-app
+data:
+  example-key: "example-value"
+---
+# A StorageClass to test storage metrics
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: test-storageclass
+  labels:
+    environment: test
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+# A PersistentVolume for testing PV metrics
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: test-pv
+  labels:
+    environment: test
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: test-storageclass
+  hostPath:
+    path: /tmp/test-pv
+---
+# A PersistentVolumeClaim for testing PVC metrics
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc
+  namespace: test-metrics
+  labels:
+    environment: test
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: test-storageclass
+  resources:
+    requests:
+      storage: 500Mi
+---
+# A simple Pod that uses the PVC, has resource requests/limits, annotations, ephemeral containers, etc.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-pod
+  namespace: test-metrics
+  labels:
+    app: test-pod
+  annotations:
+    test-annotation: "true"
+spec:
+  readinessGates:
+    - conditionType: "test.scheduling.k8s.io/ready" # non-existent, simulating conditions
+  securityContext:
+    runAsUser: 1000
+  containers:
+    - name: main-container
+      image: nginx:stable
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "200m"
+          memory: "256Mi"
+      volumeMounts:
+        - name: test-volume
+          mountPath: /data
+  initContainers:
+    - name: init-test
+      image: busybox
+      command: ["sh", "-c", "echo 'init done'"]
+  volumes:
+    - name: test-volume
+      persistentVolumeClaim:
+        claimName: test-pvc
+  # Ephemeral containers (requires feature gate + kubectl debug)
+  # Just an example; may not run as-is.
+  ephemeralContainers:
+    - name: debugger
+      image: busybox
+      command: ["sh", "-c", "sleep 3600"]
+      stdin: true
+      tty: true
+---
+# A Deployment for testing deployment metrics
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+  namespace: test-metrics
+  labels:
+    app: test-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: test-deployment
+  template:
+    metadata:
+      labels:
+        app: test-deployment
+    spec:
+      containers:
+        - name: web
+          image: nginx:stable
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+---
+# A DaemonSet to test daemonset metrics
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: test-daemonset
+  namespace: test-metrics
+  labels:
+    app: test-daemonset
+spec:
+  selector:
+    matchLabels:
+      app: test-daemonset
+  template:
+    metadata:
+      labels:
+        app: test-daemonset
+    spec:
+      containers:
+        - name: daemon
+          image: nginx:stable
+---
+# A StatefulSet to test statefulset metrics
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: test-statefulset
+  namespace: test-metrics
+  labels:
+    app: test-statefulset
+spec:
+  serviceName: "test-statefulset-service"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-statefulset
+  template:
+    metadata:
+      labels:
+        app: test-statefulset
+    spec:
+      containers:
+        - name: stateful
+          image: nginx:stable
+---
+# A Job to test job metrics
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: test-job
+  namespace: test-metrics
+  labels:
+    app: test-job
+spec:
+  completions: 1
+  parallelism: 1
+  template:
+    metadata:
+      labels:
+        app: test-job
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: job
+          image: busybox
+          command: ["sh", "-c", "echo Job Completed; sleep 2"]
+---
+# A CronJob to test cronjob metrics
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: test-cronjob
+  namespace: test-metrics
+  labels:
+    app: test-cronjob
+spec:
+  schedule: "*/5 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: test-cronjob
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: cron
+              image: busybox
+              command: ["sh", "-c", "echo CronJob Run; sleep 1"]
+---
+# A ReplicationController for replicationcontroller metrics
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: test-rc
+  namespace: test-metrics
+  labels:
+    app: test-rc
+spec:
+  replicas: 1
+  selector:
+    app: test-rc
+  template:
+    metadata:
+      labels:
+        app: test-rc
+    spec:
+      containers:
+        - name: rc-container
+          image: nginx:stable
+---
+# A Service to test service metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-service
+  namespace: test-metrics
+  labels:
+    app: test-service
+spec:
+  selector:
+    app: test-deployment
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+---
+# An Ingress to test ingress metrics (assuming ingress controller present)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test-ingress
+  namespace: test-metrics
+  labels:
+    app: test-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+    - host: "test.example.com"
+      http:
+        paths:
+          - path: "/"
+            pathType: Prefix
+            backend:
+              service:
+                name: test-service
+                port:
+                  number: 80
+---
+# A NetworkPolicy to test network policy metrics
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: test-networkpolicy
+  namespace: test-metrics
+  labels:
+    app: test-networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app: test-pod
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              environment: test
+      ports:
+        - protocol: TCP
+          port: 80
+---
+# A HorizontalPodAutoscaler to test autoscaling metrics
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: test-hpa
+  namespace: test-metrics
+  labels:
+    app: test-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: test-deployment
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+---
+# A PodDisruptionBudget to test PDB metrics
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: test-pdb
+  namespace: test-metrics
+  labels:
+    app: test-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: test-deployment
+---
+# If VolumeSnapshots are supported, test volume snapshot metrics
+# Requires CRDs from snapshot.storage.k8s.io
+# Uncomment if you have VolumeSnapshot feature enabled.
+# apiVersion: snapshot.storage.k8s.io/v1
+# kind: VolumeSnapshotClass
+# metadata:
+#   name: test-volumesnapshotclass
+# driver: hostpath.csi.k8s.io
+# deletionPolicy: Retain
+#
+# apiVersion: snapshot.storage.k8s.io/v1
+# kind: VolumeSnapshot
+# metadata:
+#   name: test-volumesnapshot
+#   namespace: test-metrics
+# spec:
+#   source:
+#     persistentVolumeClaimName: test-pvc
+#   volumeSnapshotClassName: test-volumesnapshotclass

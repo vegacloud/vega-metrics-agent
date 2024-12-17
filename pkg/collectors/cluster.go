@@ -13,17 +13,18 @@ package collectors
 
 import (
 	"context"
-	"crypto/tls"
+	// "crypto/tls"
 	"fmt"
-	"net/http"
+	// "net/http"
 	"os"
 
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/transport"
+
+	// "k8s.io/client-go/rest"
+	// "k8s.io/client-go/transport"
 
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/models"
@@ -38,19 +39,20 @@ type ClusterCollector struct {
 
 // NewClusterCollector creates a new cluster collector
 func NewClusterCollector(clientset *kubernetes.Clientset, cfg *config.Config) *ClusterCollector {
+	logrus.Debug("Starting ClusterCollector")
 	// Ensure we're using the in-cluster config token
-	if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: cfg.VegaInsecure,
-			},
-		}
-		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
-			string(token),
-			clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
-		)
-	}
-
+	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
+	// 		TLSClientConfig: &tls.Config{
+	// 			InsecureSkipVerify: cfg.VegaInsecure,
+	// 		},
+	// 	}
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
+	// 		string(token),
+	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
+	// 	)
+	// }
+	logrus.Debug("ClusterCollector initialized successfully")
 	return &ClusterCollector{
 		clientset: clientset,
 		config:    cfg,

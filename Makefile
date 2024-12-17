@@ -39,10 +39,13 @@ DOCKER_BUILD_DEV = docker build -f Dockerfile \
 .PHONY: all
 all: fmt vet lint sec test build docker-build
 
-# Default target
+# Dev target
 .PHONY: alldev
 alldev: fmt vet lint sec build docker-build-dev
 
+# Dev target without security checks
+.PHONY: alldevnosec
+alldevnosec: fmt vet lint build docker-build-dev
 
 
 # Format Go code

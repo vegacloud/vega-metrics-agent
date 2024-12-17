@@ -33,12 +33,23 @@ type DaemonSetCollector struct {
 
 // NewDaemonSetCollector creates a new DaemonSetCollector instance
 func NewDaemonSetCollector(clientset *kubernetes.Clientset, cfg *config.Config) *DaemonSetCollector {
-	collector := &DaemonSetCollector{
+	logrus.Debug("Starting DaemonSetCollector")
+	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
+	// 		TLSClientConfig: &tls.Config{
+	// 			InsecureSkipVerify: cfg.VegaInsecure,
+	// 		},
+	// 	}
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
+	// 		string(token),
+	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
+	// 	)
+	// }
+	logrus.Debug("DaemonSetCollector created successfully")
+	return &DaemonSetCollector{
 		clientset: clientset,
 		config:    cfg,
 	}
-	logrus.Debug("DaemonSetCollector created successfully")
-	return collector
 }
 
 // CollectMetrics collects metrics for daemon sets

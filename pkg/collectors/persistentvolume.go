@@ -14,12 +14,17 @@ package collectors
 
 import (
 	"context"
+	// "crypto/tls"
 	"fmt"
+	// "net/http"
+	// "os"
 
-	snapshots "github.com/kubernetes-csi/external-snapshotter/client/v6/clientset/versioned"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	// "k8s.io/client-go/rest"
+	// "k8s.io/client-go/transport"
 
 	"github.com/sirupsen/logrus"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
@@ -28,19 +33,19 @@ import (
 
 // PersistentVolumeCollector collects metrics from Kubernetes persistent volumes.
 type PersistentVolumeCollector struct {
-	clientset      *kubernetes.Clientset
-	snapshotClient *snapshots.Clientset
-	config         *config.Config
+	clientset *kubernetes.Clientset
+	config    *config.Config
 }
 
 // NewPersistentVolumeCollector creates a new PersistentVolumeCollector.
 func NewPersistentVolumeCollector(clientset *kubernetes.Clientset, cfg *config.Config) *PersistentVolumeCollector {
-	collector := &PersistentVolumeCollector{
+
+	logrus.Debug("PersistentVolumeCollector created successfully")
+	return &PersistentVolumeCollector{
 		clientset: clientset,
 		config:    cfg,
 	}
-	logrus.Debug("PersistentVolumeCollector created successfully")
-	return collector
+
 }
 
 // CollectMetrics collects metrics from Kubernetes persistent volumes.
@@ -101,50 +106,8 @@ func (pvc *PersistentVolumeCollector) collectPVMetrics(pvs []v1.PersistentVolume
 			}
 		}
 
-		// Collect snapshot metrics
-		snapshots, err := pvc.collectVolumeSnapshots(context.Background(), pv.Name)
-		if err != nil {
-			logrus.Warnf("Failed to collect snapshots for PV %s: %v", pv.Name, err)
-		} else {
-			metric.Snapshots = snapshots
-		}
-
 		pvMetrics = append(pvMetrics, metric)
 	}
 
 	return pvMetrics
-}
-
-func (pvc *PersistentVolumeCollector) collectVolumeSnapshots(ctx context.Context, pvName string) ([]models.VolumeSnapshotMetrics, error) {
-	snapshots, err := pvc.snapshotClient.SnapshotV1().VolumeSnapshots("").List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("source-pv=%s", pvName),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	var metrics []models.VolumeSnapshotMetrics
-	for _, snap := range snapshots.Items {
-		metric := models.VolumeSnapshotMetrics{
-			Name:         snap.Name,
-			Namespace:    snap.Namespace,
-			SourcePVName: pvName,
-			CreationTime: snap.CreationTimestamp.Time,
-			ReadyToUse:   *snap.Status.ReadyToUse,
-		}
-
-		if snap.Status.RestoreSize != nil {
-			metric.RestoreSize = snap.Status.RestoreSize.Value()
-		}
-		if snap.DeletionTimestamp != nil {
-			metric.DeletionTime = &snap.DeletionTimestamp.Time
-		}
-		if snap.Status.Error != nil && snap.Status.Error.Message != nil {
-			metric.Error = *snap.Status.Error.Message
-		}
-
-		metrics = append(metrics, metric)
-	}
-
-	return metrics, nil
 }

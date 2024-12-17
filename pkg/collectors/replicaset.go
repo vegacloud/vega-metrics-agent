@@ -32,12 +32,23 @@ type ReplicaSetCollector struct {
 
 // NewReplicaSetCollector creates a new ReplicaSetCollector instance
 func NewReplicaSetCollector(clientset *kubernetes.Clientset, cfg *config.Config) *ReplicaSetCollector {
-	collector := &ReplicaSetCollector{
+	// logrus.Debug("Starting ReplicaSetCollector")
+	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
+	// 		TLSClientConfig: &tls.Config{
+	// 			InsecureSkipVerify: cfg.VegaInsecure,
+	// 		},
+	// 	}
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
+	// 		string(token),
+	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
+	// 	)
+	// }
+	logrus.Debug("ReplicaSetCollector created successfully")
+	return &ReplicaSetCollector{
 		clientset: clientset,
 		config:    cfg,
 	}
-	logrus.Debug("ReplicaSetCollector created successfully")
-	return collector
 }
 
 // CollectMetrics collects metrics for all ReplicaSets in the cluster

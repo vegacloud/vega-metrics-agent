@@ -115,10 +115,6 @@ func GetClientConfig(ctx context.Context, cfg *config.Config) (*K8sClientConfig,
 		logCurrentIdentity(ctx, instance.Clientset)
 	})
 
-	if err != nil {
-		return nil, err
-	}
-
 	return instance, nil
 }
 

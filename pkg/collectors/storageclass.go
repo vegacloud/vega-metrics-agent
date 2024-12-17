@@ -34,12 +34,24 @@ type StorageClassCollector struct {
 
 // NewStorageClassCollector creates a new StorageClassCollector
 func NewStorageClassCollector(clientset *kubernetes.Clientset, cfg *config.Config) *StorageClassCollector {
-	collector := &StorageClassCollector{
+	// logrus.Debug("Starting StorageClassCollector")
+	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
+	// 		TLSClientConfig: &tls.Config{
+	// 			InsecureSkipVerify: cfg.VegaInsecure,
+	// 		},
+	// 	}
+	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
+	// 		string(token),
+	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
+	// 	)
+	// }
+	logrus.Debug("StorageClassCollector created successfully")
+	return &StorageClassCollector{
 		clientset: clientset,
 		config:    cfg,
 	}
-	logrus.Debug("StorageClassCollector created successfully")
-	return collector
+
 }
 
 // CollectMetrics collects metrics from Kubernetes storage classes

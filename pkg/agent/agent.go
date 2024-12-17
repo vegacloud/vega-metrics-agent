@@ -18,14 +18,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
 
+	"crypto/tls"
+
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/collectors"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/utils"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/transport"
 )
 
 // MetricsAgent is the main struct for the metrics agent
@@ -43,48 +48,45 @@ func NewMetricsAgent(cfg *config.Config,
 ) (*MetricsAgent, error) {
 	logger = logger.WithField("function", "NewMetricsAgent")
 
-	// Add debug logging for initial configuration
-	logger.Debugf("Initializing MetricsAgent with config: VegaInsecure=%v, OrgSlug=%s, ClusterName=%s",
-		cfg.VegaInsecure, cfg.VegaOrgSlug, cfg.VegaClusterName)
-
-	// Create an empty map to hold the collectors
-	collectorsMap := make(map[string]collectors.Collector)
-	logger.Debug("Initializing collectors")
+	// Get existing client config
 	clientConfig, err := utils.GetExistingClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get existing client config: %w", err)
 	}
-	// // Initialize the NodeCollector
-	// logger.Debug("Creating NodeCollector")
-	// nodeCollector, err := collectors.NewNodeCollector(k8sClientset.(*kubernetes.Clientset), cfg)
-	// if err != nil {
-	// 	logger.Debugf("NodeCollector creation failed: %v", err)
-	// 	return nil, fmt.Errorf("failed to create NodeCollector: %w", err)
-	// }
-	// collectorsMap["node"] = nodeCollector
-	// logger.Debug("Successfully created NodeCollector")
 
-	// Initialize other collectors
-	// podCollector := collectors.NewPodCollector(k8sClientset.(*kubernetes.Clientset), cfg)
-	// collectorsMap["pod"] = podCollector
-	// Ensure we're passing the properly configured client
+	// Configure transport once for the clientset
+	token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read service account token: %w", err)
+	}
 
-	clusterCollector := collectors.NewClusterCollector(
-		clientConfig.Clientset, //
-		cfg,
+	clientConfig.Clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: cfg.VegaInsecure,
+		},
+	}
+
+	clientConfig.Clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
+		string(token),
+		clientConfig.Clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
 	)
-	collectorsMap["cluster"] = clusterCollector
 
-	// collectorsMap["pv"] = collectors.NewPersistentVolumeCollector(k8sClientset.(*kubernetes.Clientset), cfg)
-	// collectorsMap["namespace"] = collectors.NewNamespaceCollector(k8sClientset.(*kubernetes.Clientset), cfg)
-	// collectorsMap["workload"] = collectors.NewWorkloadCollector(k8sClientset.(*kubernetes.Clientset), cfg)
-	// collectorsMap["network"] = collectors.NewNetworkingCollector(k8sClientset.(*kubernetes.Clientset), cfg)
-	// collectorsMap["job"] = collectors.NewJobCollector(k8sClientset.(*kubernetes.Clientset), cfg)
-	// collectorsMap["cronjob"] = collectors.NewCronJobCollector(k8sClientset.(*kubernetes.Clientset), cfg)
-	// collectorsMap["hpa"] = collectors.NewHPACollector(k8sClientset.(*kubernetes.Clientset), cfg)
-	// collectorsMap["replicationController"] = collectors.NewReplicationControllerCollector(k8sClientset.(*kubernetes.Clientset), cfg)
-	// collectorsMap["storageclass"] = collectors.NewStorageClassCollector(k8sClientset.(*kubernetes.Clientset), cfg)
-	// collectorsMap["replicasets"] = collectors.NewReplicaSetCollector(k8sClientset.(*kubernetes.Clientset), cfg)
+	// Create collectors with the properly configured clientset
+	collectorsMap := make(map[string]collectors.Collector)
+	clusterCollector := collectors.NewClusterCollector(clientConfig.Clientset, cfg)
+	collectorsMap["cluster"] = clusterCollector
+	collectorsMap["node"] = collectors.NewNodeCollector(clientConfig.Clientset, cfg)
+	collectorsMap["pod"] = collectors.NewPodCollector(clientConfig.Clientset, cfg)
+	collectorsMap["pv"] = collectors.NewPersistentVolumeCollector(clientConfig.Clientset, cfg)
+	collectorsMap["namespace"] = collectors.NewNamespaceCollector(clientConfig.Clientset, cfg)
+	collectorsMap["workload"] = collectors.NewWorkloadCollector(clientConfig.Clientset, cfg)
+	collectorsMap["network"] = collectors.NewNetworkingCollector(clientConfig.Clientset, cfg)
+	collectorsMap["job"] = collectors.NewJobCollector(clientConfig.Clientset, cfg)
+	collectorsMap["cronjob"] = collectors.NewCronJobCollector(clientConfig.Clientset, cfg)
+	collectorsMap["hpa"] = collectors.NewHPACollector(clientConfig.Clientset, cfg)
+	collectorsMap["replicationController"] = collectors.NewReplicationControllerCollector(clientConfig.Clientset, cfg)
+	collectorsMap["storageclass"] = collectors.NewStorageClassCollector(clientConfig.Clientset, cfg)
+	collectorsMap["replicasets"] = collectors.NewReplicaSetCollector(clientConfig.Clientset, cfg)
 
 	logger.Debugf("loaded %v collectors", len(collectorsMap))
 
