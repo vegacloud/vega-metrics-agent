@@ -15,6 +15,7 @@ package collectors
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"runtime/debug"
 
 	"github.com/sirupsen/logrus"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/models"
+	"github.com/vegacloud/kubernetes/metricsagent/pkg/utils"
 )
 
 // NetworkingCollector collects metrics from Kubernetes networking resources.
@@ -325,93 +327,136 @@ func (nc *NetworkingCollector) collectNetworkPolicyMetrics(ctx context.Context) 
 	logrus.Debugf("Successfully listed %d network policies", len(networkPolicies.Items))
 
 	metrics := make([]models.NetworkPolicyMetrics, 0, len(networkPolicies.Items))
+	var parseErrors []error
 
 	for _, policy := range networkPolicies.Items {
-		metrics = append(metrics, nc.parseNetworkPolicyMetrics(policy))
+		metric, err := nc.parseNetworkPolicyMetrics(policy)
+		if err != nil {
+			logrus.WithFields(logrus.Fields{
+				"policy":    policy.Name,
+				"namespace": policy.Namespace,
+				"error":     err,
+			}).Warn("Failed to parse network policy metrics")
+			parseErrors = append(parseErrors, err)
+			continue
+		}
+		metrics = append(metrics, metric)
+	}
+
+	if len(parseErrors) > 0 {
+		logrus.WithField("error_count", len(parseErrors)).Warn("Some network policies failed to parse")
 	}
 
 	return metrics, nil
 }
 
-func (nc *NetworkingCollector) parseNetworkPolicyMetrics(policy networkingv1.NetworkPolicy) models.NetworkPolicyMetrics {
+func validatePolicy(policy networkingv1.NetworkPolicy) error {
+	mustHave := []string{"Name", "Namespace", "Labels", "Annotations", "Spec"}
+	val := reflect.ValueOf(policy)
+	for _, field := range mustHave {
+		if err := utils.HasField(val.Interface(), field); err != nil {
+			return fmt.Errorf("missing required field: %s", field)
+		}
+	}
+	return nil
+}
+
+func (nc *NetworkingCollector) parseNetworkPolicyMetrics(policy networkingv1.NetworkPolicy) (models.NetworkPolicyMetrics, error) {
+	if err := validatePolicy(policy); err != nil {
+		return models.NetworkPolicyMetrics{}, fmt.Errorf("invalid network policy: %w", err)
+	}
+
+	// Initialize metrics with required fields
 	metrics := models.NetworkPolicyMetrics{
 		Name:        policy.Name,
 		Namespace:   policy.Namespace,
 		Labels:      policy.Labels,
 		Annotations: policy.Annotations,
-		PodSelector: policy.Spec.PodSelector.MatchLabels,
 	}
 
-	// Parse policy types
-	for _, pType := range policy.Spec.PolicyTypes {
-		metrics.PolicyTypes = append(metrics.PolicyTypes, string(pType))
+	// Handle PodSelector
+	if err := utils.HasField(policy.Spec, "PodSelector"); err == nil {
+		metrics.PodSelector = policy.Spec.PodSelector.MatchLabels
 	}
 
-	// Parse ingress rules
-	for _, rule := range policy.Spec.Ingress {
-		ingressRule := models.NetworkPolicyIngressRule{}
-
-		// Parse ports
-		for _, port := range rule.Ports {
-			ingressRule.Ports = append(ingressRule.Ports, models.NetworkPolicyPort{
-				Protocol: string(*port.Protocol),
-				Port:     port.Port.IntVal,
-			})
+	// Handle PolicyTypes
+	if err := utils.HasField(policy.Spec, "PolicyTypes"); err == nil {
+		for _, pType := range policy.Spec.PolicyTypes {
+			metrics.PolicyTypes = append(metrics.PolicyTypes, string(pType))
 		}
+	}
 
-		// Parse from rules
-		for _, from := range rule.From {
-			peer := models.NetworkPolicyPeer{}
-			if from.PodSelector != nil {
-				peer.PodSelector = from.PodSelector.MatchLabels
-			}
-			if from.NamespaceSelector != nil {
-				peer.NamespaceSelector = from.NamespaceSelector.MatchLabels
-			}
-			if from.IPBlock != nil {
-				peer.IPBlock = &models.IPBlock{
-					CIDR:   from.IPBlock.CIDR,
-					Except: from.IPBlock.Except,
+	// Handle Ingress rules
+	if err := utils.HasField(policy.Spec, "Ingress"); err == nil {
+		for _, rule := range policy.Spec.Ingress {
+			ingressRule := models.NetworkPolicyIngressRule{}
+
+			// Parse ports
+			for _, port := range rule.Ports {
+				if port.Protocol == nil || port.Port == nil {
+					continue
 				}
+				ingressRule.Ports = append(ingressRule.Ports, models.NetworkPolicyPort{
+					Protocol: string(*port.Protocol),
+					Port:     port.Port.IntVal,
+				})
 			}
-			ingressRule.From = append(ingressRule.From, peer)
-		}
 
-		metrics.Ingress = append(metrics.Ingress, ingressRule)
+			// Parse from rules
+			for _, from := range rule.From {
+				peer := parseNetworkPolicyPeer(from)
+				ingressRule.From = append(ingressRule.From, peer)
+			}
+
+			metrics.Ingress = append(metrics.Ingress, ingressRule)
+		}
 	}
 
-	// Parse egress rules
-	for _, rule := range policy.Spec.Egress {
-		egressRule := models.NetworkPolicyEgressRule{}
+	// Handle Egress rules
+	if err := utils.HasField(policy.Spec, "Egress"); err == nil {
+		for _, rule := range policy.Spec.Egress {
+			egressRule := models.NetworkPolicyEgressRule{}
 
-		// Parse ports
-		for _, port := range rule.Ports {
-			egressRule.Ports = append(egressRule.Ports, models.NetworkPolicyPort{
-				Protocol: string(*port.Protocol),
-				Port:     port.Port.IntVal,
-			})
-		}
-
-		// Parse to rules
-		for _, to := range rule.To {
-			peer := models.NetworkPolicyPeer{}
-			if to.PodSelector != nil {
-				peer.PodSelector = to.PodSelector.MatchLabels
-			}
-			if to.NamespaceSelector != nil {
-				peer.NamespaceSelector = to.NamespaceSelector.MatchLabels
-			}
-			if to.IPBlock != nil {
-				peer.IPBlock = &models.IPBlock{
-					CIDR:   to.IPBlock.CIDR,
-					Except: to.IPBlock.Except,
+			// Parse ports
+			for _, port := range rule.Ports {
+				if port.Protocol == nil || port.Port == nil {
+					continue
 				}
+				egressRule.Ports = append(egressRule.Ports, models.NetworkPolicyPort{
+					Protocol: string(*port.Protocol),
+					Port:     port.Port.IntVal,
+				})
 			}
-			egressRule.To = append(egressRule.To, peer)
-		}
 
-		metrics.Egress = append(metrics.Egress, egressRule)
+			// Parse to rules
+			for _, to := range rule.To {
+				peer := parseNetworkPolicyPeer(to)
+				egressRule.To = append(egressRule.To, peer)
+			}
+
+			metrics.Egress = append(metrics.Egress, egressRule)
+		}
 	}
 
-	return metrics
+	return metrics, nil
+}
+
+// Helper function to parse network policy peer
+func parseNetworkPolicyPeer(peer networkingv1.NetworkPolicyPeer) models.NetworkPolicyPeer {
+	result := models.NetworkPolicyPeer{}
+
+	if peer.PodSelector != nil {
+		result.PodSelector = peer.PodSelector.MatchLabels
+	}
+	if peer.NamespaceSelector != nil {
+		result.NamespaceSelector = peer.NamespaceSelector.MatchLabels
+	}
+	if peer.IPBlock != nil {
+		result.IPBlock = &models.IPBlock{
+			CIDR:   peer.IPBlock.CIDR,
+			Except: peer.IPBlock.Except,
+		}
+	}
+
+	return result
 }
