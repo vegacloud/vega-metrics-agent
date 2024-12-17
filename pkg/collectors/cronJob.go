@@ -14,6 +14,7 @@ package collectors
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -162,7 +163,15 @@ func (cjc *CronJobCollector) parseJobMetrics(job batchv1.Job) models.JobMetrics 
 func (cjc *CronJobCollector) calculateNextSchedule(cj batchv1.CronJob) (*time.Time, error) {
 	schedule, err := cjc.parser.Parse(cj.Spec.Schedule)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse schedule: %w", err)
+		if strings.Contains(err.Error(), "expected exactly 6 fields, found 5") {
+			// not every cron expression has a seconds field, so we add one if it's missing
+			schedule, err = cjc.parser.Parse(fmt.Sprintf("0 %s", cj.Spec.Schedule))
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse schedule: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("failed to parse schedule: %w", err)
+		}
 	}
 
 	var baseTime time.Time
