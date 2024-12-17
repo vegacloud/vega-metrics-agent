@@ -26,8 +26,8 @@ GO_VET = go vet ./...
 DOCKER_BUILD = docker build -f Dockerfile \
 	--build-arg golang_version=${GOLANG_VERSION} \
 	--build-arg app_version=${VERSION} \
-	-t ${DOCKER_IMAGE}:${VERSION} .
-
+	-t ${DOCKER_IMAGE}:${VERSION} \
+	-t ${DOCKER_IMAGE}:latest .
 
 DOCKER_BUILD_DEV = docker build -f Dockerfile \
 	--build-arg golang_version=${GOLANG_VERSION} \
@@ -103,6 +103,7 @@ docker-build-dev:
 .PHONY: docker-push
 docker-push:
 	docker push ${DOCKER_IMAGE}:${VERSION}
+	docker push ${DOCKER_IMAGE}:latest
 
 # Clean build artifacts
 .PHONY: clean
