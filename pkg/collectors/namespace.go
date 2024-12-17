@@ -14,7 +14,7 @@ package collectors
 
 import (
 	"context"
-	"fmt"
+	"runtime/debug"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -34,18 +34,15 @@ type NamespaceCollector struct {
 
 // NewNamespaceCollector creates a new NamespaceCollector.
 func NewNamespaceCollector(clientset *kubernetes.Clientset, cfg *config.Config) *NamespaceCollector {
-	// logrus.Debug("Starting NamespaceCollector")
-	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
-	// 		TLSClientConfig: &tls.Config{
-	// 			InsecureSkipVerify: cfg.VegaInsecure,
-	// 		},
-	// 	}
-	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
-	// 		string(token),
-	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
-	// 	)
-	// }
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in NewNamespaceCollector")
+		}
+	}()
+
 	logrus.Debug("Creating new NamespaceCollector")
 	return &NamespaceCollector{
 		clientset: clientset,
@@ -55,40 +52,77 @@ func NewNamespaceCollector(clientset *kubernetes.Clientset, cfg *config.Config) 
 
 // CollectMetrics collects metrics from Kubernetes namespaces.
 func (nc *NamespaceCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in NamespaceCollector.CollectMetrics")
+		}
+	}()
+
 	logrus.Debug("Collecting namespace metrics")
-	return nc.CollectNamespaceMetrics(ctx)
+	metrics, err := nc.CollectNamespaceMetrics(ctx)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to collect namespace metrics")
+		return []models.NamespaceMetrics{}, nil
+	}
+	return metrics, nil
 }
 
 // CollectNamespaceMetrics collects metrics from Kubernetes namespaces.
 func (nc *NamespaceCollector) CollectNamespaceMetrics(ctx context.Context) ([]models.NamespaceMetrics, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in CollectNamespaceMetrics")
+		}
+	}()
+
 	namespaces, err := nc.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list namespaces: %w", err)
+		logrus.WithError(err).Error("Failed to list namespaces")
+		return []models.NamespaceMetrics{}, nil
 	}
-	logrus.Debugf("Listed %d namespaces", len(namespaces.Items))
 
 	namespaceMetrics := make([]models.NamespaceMetrics, 0, len(namespaces.Items))
-
 	for _, ns := range namespaces.Items {
+		logrus.WithField("namespace", ns.Name).Debug("Processing namespace")
+
 		metrics, err := nc.collectSingleNamespaceMetrics(ctx, ns)
 		if err != nil {
-			logrus.Warnf("Failed to collect metrics for namespace %s: %v", ns.Name, err)
+			logrus.WithFields(logrus.Fields{
+				"namespace": ns.Name,
+				"error":     err,
+			}).Error("Failed to collect metrics for namespace")
 			continue
 		}
 		namespaceMetrics = append(namespaceMetrics, metrics)
-		logrus.Debugf("Collected metrics for namespace %s", ns.Name)
 	}
 
+	logrus.WithField("count", len(namespaceMetrics)).Debug("Completed namespace metrics collection")
 	return namespaceMetrics, nil
 }
 
 // collectSingleNamespaceMetrics collects metrics from a single Kubernetes namespace.
-func (nc *NamespaceCollector) collectSingleNamespaceMetrics(
-	ctx context.Context,
-	ns v1.Namespace,
-) (models.NamespaceMetrics, error) {
+func (nc *NamespaceCollector) collectSingleNamespaceMetrics(ctx context.Context, ns v1.Namespace) (models.NamespaceMetrics, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"namespace":  ns.Name,
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in collectSingleNamespaceMetrics")
+		}
+	}()
+
 	if ns.Labels == nil {
 		ns.Labels = make(map[string]string)
+	}
+	if ns.Annotations == nil {
+		ns.Annotations = make(map[string]string)
 	}
 
 	metrics := models.NamespaceMetrics{
@@ -108,8 +142,16 @@ func (nc *NamespaceCollector) collectSingleNamespaceMetrics(
 		metrics.DeletionTimestamp = &deletionTime
 	}
 
-	// Convert conditions
+	// Convert conditions safely
+	metrics.Conditions = make([]models.NamespaceCondition, 0, len(ns.Status.Conditions))
 	for _, condition := range ns.Status.Conditions {
+		if condition.LastTransitionTime.IsZero() {
+			logrus.WithFields(logrus.Fields{
+				"namespace": ns.Name,
+				"condition": condition.Type,
+			}).Debug("Skipping condition with zero transition time")
+			continue
+		}
 		metrics.Conditions = append(metrics.Conditions, models.NamespaceCondition{
 			Type:               string(condition.Type),
 			Status:             string(condition.Status),
@@ -119,39 +161,66 @@ func (nc *NamespaceCollector) collectSingleNamespaceMetrics(
 		})
 	}
 
-	// Collect ResourceQuotas
+	// Collect ResourceQuotas with error handling
 	quotas, err := nc.clientset.CoreV1().ResourceQuotas(ns.Name).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return metrics, fmt.Errorf("failed to list resource quotas: %w", err)
+		logrus.WithFields(logrus.Fields{
+			"namespace": ns.Name,
+			"error":     err,
+		}).Error("Failed to list resource quotas")
+	} else {
+		for _, quota := range quotas.Items {
+			metrics.ResourceQuotas = append(metrics.ResourceQuotas, nc.parseResourceQuota(quota))
+		}
 	}
-	logrus.Debugf("Listed %d resource quotas for namespace %s", len(quotas.Items), ns.Name)
 
-	for _, quota := range quotas.Items {
-		metrics.ResourceQuotas = append(metrics.ResourceQuotas, nc.parseResourceQuota(quota))
-	}
-
-	// Collect LimitRanges
+	// Collect LimitRanges with error handling
 	limitRanges, err := nc.clientset.CoreV1().LimitRanges(ns.Name).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return metrics, fmt.Errorf("failed to list limit ranges: %w", err)
+		logrus.WithFields(logrus.Fields{
+			"namespace": ns.Name,
+			"error":     err,
+		}).Error("Failed to list limit ranges")
+	} else {
+		for _, lr := range limitRanges.Items {
+			metrics.LimitRanges = append(metrics.LimitRanges, nc.parseLimitRange(lr))
+		}
 	}
-	logrus.Debugf("Listed %d limit ranges for namespace %s", len(limitRanges.Items), ns.Name)
 
-	for _, lr := range limitRanges.Items {
-		metrics.LimitRanges = append(metrics.LimitRanges, nc.parseLimitRange(lr))
-	}
-
-	// Collect usage metrics
-	metrics.Usage, err = nc.collectNamespaceUsage(ctx, ns.Name)
+	// Collect usage metrics with error handling
+	usage, err := nc.collectNamespaceUsage(ctx, ns.Name)
 	if err != nil {
-		logrus.Warnf("Failed to collect usage metrics for namespace %s: %v", ns.Name, err)
+		logrus.WithFields(logrus.Fields{
+			"namespace": ns.Name,
+			"error":     err,
+		}).Error("Failed to collect usage metrics")
+	} else {
+		metrics.Usage = usage
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"namespace":       ns.Name,
+		"quotasCount":     len(metrics.ResourceQuotas),
+		"limitsCount":     len(metrics.LimitRanges),
+		"conditionsCount": len(metrics.Conditions),
+	}).Debug("Collected namespace metrics")
 
 	return metrics, nil
 }
 
 // parseResourceQuota parses metrics from a Kubernetes resource quota.
 func (nc *NamespaceCollector) parseResourceQuota(quota v1.ResourceQuota) models.ResourceQuotaMetrics {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"quota":      quota.Name,
+				"namespace":  quota.Namespace,
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in parseResourceQuota")
+		}
+	}()
+
 	metrics := models.ResourceQuotaMetrics{
 		Name: quota.Name,
 	}
@@ -210,6 +279,17 @@ func extractPriorityClass(resource string) string {
 }
 
 func (nc *NamespaceCollector) parseLimitRange(lr v1.LimitRange) models.LimitRangeMetrics {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"limitRange": lr.Name,
+				"namespace":  lr.Namespace,
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in parseLimitRange")
+		}
+	}()
+
 	metrics := models.LimitRangeMetrics{
 		Name: lr.Name,
 	}
@@ -254,17 +334,27 @@ func (nc *NamespaceCollector) parseLimitRange(lr v1.LimitRange) models.LimitRang
 	return metrics
 }
 
-func (nc *NamespaceCollector) collectNamespaceUsage(
-	ctx context.Context,
-	namespace string,
-) (models.ResourceUsage, error) {
+func (nc *NamespaceCollector) collectNamespaceUsage(ctx context.Context, namespace string) (models.ResourceUsage, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"namespace":  namespace,
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in collectNamespaceUsage")
+		}
+	}()
+
 	usage := models.ResourceUsage{}
 
 	pods, err := nc.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return usage, fmt.Errorf("failed to list pods: %w", err)
+		logrus.WithFields(logrus.Fields{
+			"namespace": namespace,
+			"error":     err,
+		}).Error("Failed to list pods")
+		return usage, nil
 	}
-	logrus.Debugf("Listed %d pods for namespace %s", len(pods.Items), namespace)
 
 	for _, pod := range pods.Items {
 		for _, container := range pod.Spec.Containers {
@@ -275,9 +365,12 @@ func (nc *NamespaceCollector) collectNamespaceUsage(
 
 	pvcs, err := nc.clientset.CoreV1().PersistentVolumeClaims(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return usage, fmt.Errorf("failed to list PVCs: %w", err)
+		logrus.WithFields(logrus.Fields{
+			"namespace": namespace,
+			"error":     err,
+		}).Error("Failed to list PVCs")
+		return usage, nil
 	}
-	logrus.Debugf("Listed %d PVCs for namespace %s", len(pvcs.Items), namespace)
 
 	for _, pvc := range pvcs.Items {
 		if pvc.Spec.Resources.Requests != nil {
@@ -289,6 +382,13 @@ func (nc *NamespaceCollector) collectNamespaceUsage(
 
 	usage.Pods = int64(len(pods.Items))
 
-	logrus.Debugf("Collected usage metrics for namespace %s", namespace)
+	logrus.WithFields(logrus.Fields{
+		"namespace": namespace,
+		"cpu":       usage.CPU,
+		"memory":    usage.Memory,
+		"storage":   usage.Storage,
+		"pods":      usage.Pods,
+	}).Debug("Collected namespace usage metrics")
+
 	return usage, nil
 }

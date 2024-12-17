@@ -15,6 +15,7 @@ package collectors
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -36,61 +37,90 @@ type WorkloadCollector struct {
 
 // NewWorkloadCollector creates a new WorkloadCollector.
 func NewWorkloadCollector(clientset *kubernetes.Clientset, cfg *config.Config) *WorkloadCollector {
-	// logrus.Debug("Starting WorkloadCollector")
-	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
-	// 		TLSClientConfig: &tls.Config{
-	// 			InsecureSkipVerify: cfg.VegaInsecure,
-	// 		},
-	// 	}
-	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
-	// 		string(token),
-	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
-	// 	)
-	// }
-	logrus.Debug("WorkloadCollector created successfully")
-	return &WorkloadCollector{
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in NewWorkloadCollector")
+		}
+	}()
+
+	logrus.Debug("Creating new WorkloadCollector")
+	collector := &WorkloadCollector{
 		clientset: clientset,
 		config:    cfg,
 	}
+	logrus.Debug("WorkloadCollector created successfully")
+	return collector
 }
 
 // CollectMetrics collects metrics from Kubernetes workloads.
 func (wc *WorkloadCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
-	return wc.CollectWorkloadMetrics(ctx)
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in WorkloadCollector.CollectMetrics")
+		}
+	}()
+
+	metrics, err := wc.CollectWorkloadMetrics(ctx)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to collect workload metrics")
+		return &models.WorkloadMetrics{}, nil
+	}
+	return metrics, nil
 }
 
 // CollectWorkloadMetrics collects metrics from Kubernetes workloads.
 func (wc *WorkloadCollector) CollectWorkloadMetrics(ctx context.Context) (*models.WorkloadMetrics, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in CollectWorkloadMetrics")
+		}
+	}()
+
 	metrics := &models.WorkloadMetrics{}
 
-	var err error
-	metrics.Deployments, err = wc.collectDeploymentMetrics(ctx)
+	// Collect deployment metrics
+	deployments, err := wc.collectDeploymentMetrics(ctx)
 	if err != nil {
-		logrus.Warnf("Failed to collect deployment metrics: %v", err)
+		logrus.WithError(err).Warn("Failed to collect deployment metrics")
 	} else {
-		logrus.Debug("Successfully collected deployment metrics")
+		metrics.Deployments = deployments
+		logrus.WithField("count", len(deployments)).Debug("Successfully collected deployment metrics")
 	}
 
-	metrics.StatefulSets, err = wc.collectStatefulSetMetrics(ctx)
+	// Collect statefulset metrics
+	statefulSets, err := wc.collectStatefulSetMetrics(ctx)
 	if err != nil {
-		logrus.Warnf("Failed to collect statefulset metrics: %v", err)
+		logrus.WithError(err).Warn("Failed to collect statefulset metrics")
 	} else {
-		logrus.Debug("Successfully collected statefulset metrics")
+		metrics.StatefulSets = statefulSets
+		logrus.WithField("count", len(statefulSets)).Debug("Successfully collected statefulset metrics")
 	}
 
-	metrics.DaemonSets, err = wc.collectDaemonSetMetrics(ctx)
+	// Collect daemonset metrics
+	daemonSets, err := wc.collectDaemonSetMetrics(ctx)
 	if err != nil {
-		logrus.Warnf("Failed to collect daemonset metrics: %v", err)
+		logrus.WithError(err).Warn("Failed to collect daemonset metrics")
 	} else {
-		logrus.Debug("Successfully collected daemonset metrics")
+		metrics.DaemonSets = daemonSets
+		logrus.WithField("count", len(daemonSets)).Debug("Successfully collected daemonset metrics")
 	}
 
-	metrics.Jobs, err = wc.collectJobMetrics(ctx)
+	// Collect job metrics
+	jobs, err := wc.collectJobMetrics(ctx)
 	if err != nil {
-		logrus.Warnf("Failed to collect job metrics: %v", err)
+		logrus.WithError(err).Warn("Failed to collect job metrics")
 	} else {
-		logrus.Debug("Successfully collected job metrics")
+		metrics.Jobs = jobs
+		logrus.WithField("count", len(jobs)).Debug("Successfully collected job metrics")
 	}
 
 	return metrics, nil
@@ -98,22 +128,44 @@ func (wc *WorkloadCollector) CollectWorkloadMetrics(ctx context.Context) (*model
 
 // collectDeploymentMetrics collects metrics from Kubernetes deployments.
 func (wc *WorkloadCollector) collectDeploymentMetrics(ctx context.Context) ([]models.DeploymentMetrics, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in collectDeploymentMetrics")
+		}
+	}()
+
 	deployments, err := wc.clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list deployments: %w", err)
+		return nil, err
 	}
 
 	metrics := make([]models.DeploymentMetrics, 0, len(deployments.Items))
-
 	for _, d := range deployments.Items {
+		logrus.WithFields(logrus.Fields{
+			"deployment": d.Name,
+			"namespace":  d.Namespace,
+		}).Debug("Processing deployment")
 		metrics = append(metrics, wc.parseDeploymentMetrics(d))
 	}
 
-	logrus.Debugf("Collected metrics for %d deployments", len(metrics))
 	return metrics, nil
 }
 
 func (wc *WorkloadCollector) parseDeploymentMetrics(d appsv1.Deployment) models.DeploymentMetrics {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"deployment": d.Name,
+				"namespace":  d.Namespace,
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in parseDeploymentMetrics")
+		}
+	}()
+
 	if d.Labels == nil {
 		d.Labels = make(map[string]string)
 	}
@@ -123,7 +175,7 @@ func (wc *WorkloadCollector) parseDeploymentMetrics(d appsv1.Deployment) models.
 		conditions = append(conditions, string(condition.Type))
 	}
 
-	return models.DeploymentMetrics{
+	metrics := models.DeploymentMetrics{
 		Name:               d.Name,
 		Namespace:          d.Namespace,
 		Replicas:           *d.Spec.Replicas,
@@ -136,6 +188,16 @@ func (wc *WorkloadCollector) parseDeploymentMetrics(d appsv1.Deployment) models.
 		Generation:         d.Generation,
 		ObservedGeneration: d.Status.ObservedGeneration,
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"deployment": d.Name,
+		"namespace":  d.Namespace,
+		"replicas":   metrics.Replicas,
+		"ready":      metrics.ReadyReplicas,
+		"available":  metrics.AvailableReplicas,
+	}).Debug("Collected metrics for deployment")
+
+	return metrics
 }
 
 func (wc *WorkloadCollector) collectStatefulSetMetrics(ctx context.Context) ([]models.StatefulSetMetrics, error) {
