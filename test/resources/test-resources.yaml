@@ -7,7 +7,6 @@ metadata:
     environment: test
     purpose: metrics-collection
 ---
-# A ResourceQuota to test namespace-level quota metrics
 apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -21,7 +20,6 @@ spec:
     limits.cpu: "4"
     limits.memory: "2Gi"
 ---
-# A LimitRange to test namespace-level limit metrics
 apiVersion: v1
 kind: LimitRange
 metadata:
@@ -40,7 +38,6 @@ spec:
         cpu: "500m"
         memory: "512Mi"
 ---
-# A ConfigMap to test presence of config-related metrics (labels/annotations, etc.)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -51,7 +48,6 @@ metadata:
 data:
   example-key: "example-value"
 ---
-# A StorageClass to test storage metrics
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -61,7 +57,6 @@ metadata:
 provisioner: kubernetes.io/no-provisioner
 volumeBindingMode: WaitForFirstConsumer
 ---
-# A PersistentVolume for testing PV metrics
 apiVersion: v1
 kind: PersistentVolume
 metadata:
@@ -78,7 +73,6 @@ spec:
   hostPath:
     path: /tmp/test-pv
 ---
-# A PersistentVolumeClaim for testing PVC metrics
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -94,7 +88,6 @@ spec:
     requests:
       storage: 500Mi
 ---
-# A simple Pod that uses the PVC, has resource requests/limits, annotations, ephemeral containers, etc.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -106,12 +99,16 @@ metadata:
     test-annotation: "true"
 spec:
   readinessGates:
-    - conditionType: "test.scheduling.k8s.io/ready" # non-existent, simulating conditions
+    - conditionType: "test.scheduling.k8s.io/ready"
   securityContext:
-    runAsUser: 1000
+    fsGroup: 101
+    runAsUser: 101
+    runAsGroup: 101
   containers:
     - name: main-container
       image: nginx:stable
+      ports:
+        - containerPort: 8080
       resources:
         requests:
           cpu: "100m"
@@ -122,24 +119,49 @@ spec:
       volumeMounts:
         - name: test-volume
           mountPath: /data
+        - name: nginx-cache
+          mountPath: /var/cache/nginx
+        - name: nginx-run
+          mountPath: /var/run
+        - name: nginx-conf
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: nginx.conf
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
   initContainers:
     - name: init-test
       image: busybox
-      command: ["sh", "-c", "echo 'init done'"]
+      command: 
+        - sh
+        - -c
+        - |
+          cat <<EOF > /etc/nginx/nginx.conf
+          server {
+              listen 8080;
+              server_name localhost;
+              location / {
+                  root   /usr/share/nginx/html;
+                  index  index.html index.htm;
+              }
+          }
+          EOF
+      volumeMounts:
+        - name: nginx-conf
+          mountPath: /etc/nginx
   volumes:
     - name: test-volume
       persistentVolumeClaim:
         claimName: test-pvc
-  # Ephemeral containers (requires feature gate + kubectl debug)
-  # Just an example; may not run as-is.
-  ephemeralContainers:
-    - name: debugger
-      image: busybox
-      command: ["sh", "-c", "sleep 3600"]
-      stdin: true
-      tty: true
+    - name: nginx-cache
+      emptyDir: {}
+    - name: nginx-run
+      emptyDir: {}
+    - name: nginx-conf
+      emptyDir: {}
 ---
-# A Deployment for testing deployment metrics
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -160,12 +182,13 @@ spec:
       containers:
         - name: web
           image: nginx:stable
+          ports:
+            - containerPort: 8080
           resources:
             requests:
               cpu: "100m"
               memory: "128Mi"
 ---
-# A DaemonSet to test daemonset metrics
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -185,8 +208,9 @@ spec:
       containers:
         - name: daemon
           image: nginx:stable
+          ports:
+            - containerPort: 8080
 ---
-# A StatefulSet to test statefulset metrics
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -208,8 +232,9 @@ spec:
       containers:
         - name: stateful
           image: nginx:stable
+          ports:
+            - containerPort: 8080
 ---
-# A Job to test job metrics
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -231,7 +256,6 @@ spec:
           image: busybox
           command: ["sh", "-c", "echo Job Completed; sleep 2"]
 ---
-# A CronJob to test cronjob metrics
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -254,7 +278,6 @@ spec:
               image: busybox
               command: ["sh", "-c", "echo CronJob Run; sleep 1"]
 ---
-# A ReplicationController for replicationcontroller metrics
 apiVersion: v1
 kind: ReplicationController
 metadata:
@@ -274,8 +297,9 @@ spec:
       containers:
         - name: rc-container
           image: nginx:stable
+          ports:
+            - containerPort: 8080
 ---
-# A Service to test service metrics
 apiVersion: v1
 kind: Service
 metadata:
@@ -289,9 +313,8 @@ spec:
   ports:
     - protocol: TCP
       port: 80
-      targetPort: 80
+      targetPort: 8080
 ---
-# An Ingress to test ingress metrics (assuming ingress controller present)
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -314,7 +337,6 @@ spec:
                 port:
                   number: 80
 ---
-# A NetworkPolicy to test network policy metrics
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -335,9 +357,8 @@ spec:
               environment: test
       ports:
         - protocol: TCP
-          port: 80
+          port: 8080
 ---
-# A HorizontalPodAutoscaler to test autoscaling metrics
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -360,7 +381,6 @@ spec:
           type: Utilization
           averageUtilization: 50
 ---
-# A PodDisruptionBudget to test PDB metrics
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -373,23 +393,3 @@ spec:
   selector:
     matchLabels:
       app: test-deployment
----
-# If VolumeSnapshots are supported, test volume snapshot metrics
-# Requires CRDs from snapshot.storage.k8s.io
-# Uncomment if you have VolumeSnapshot feature enabled.
-# apiVersion: snapshot.storage.k8s.io/v1
-# kind: VolumeSnapshotClass
-# metadata:
-#   name: test-volumesnapshotclass
-# driver: hostpath.csi.k8s.io
-# deletionPolicy: Retain
-#
-# apiVersion: snapshot.storage.k8s.io/v1
-# kind: VolumeSnapshot
-# metadata:
-#   name: test-volumesnapshot
-#   namespace: test-metrics
-# spec:
-#   source:
-#     persistentVolumeClaimName: test-pvc
-#   volumeSnapshotClassName: test-volumesnapshotclass
