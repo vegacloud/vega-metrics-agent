@@ -8,11 +8,14 @@
 // by the Apache License, Version 2.0, included in the file
 // licenses/APL.txt.
 // File: pkg/collectors/workload.go
+
+// Package collectors hosts the collection functions
 package collectors
 
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	appsv1 "k8s.io/api/apps/v1"
@@ -22,13 +25,16 @@ import (
 
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/models"
+	v1 "k8s.io/api/core/v1"
 )
 
+// WorkloadCollector collects metrics from Kubernetes workloads.
 type WorkloadCollector struct {
 	clientset *kubernetes.Clientset
 	config    *config.Config
 }
 
+// NewWorkloadCollector creates a new WorkloadCollector.
 func NewWorkloadCollector(clientset *kubernetes.Clientset, cfg *config.Config) *WorkloadCollector {
 	return &WorkloadCollector{
 		clientset: clientset,
@@ -36,10 +42,12 @@ func NewWorkloadCollector(clientset *kubernetes.Clientset, cfg *config.Config) *
 	}
 }
 
+// CollectMetrics collects metrics from Kubernetes workloads.
 func (wc *WorkloadCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
 	return wc.CollectWorkloadMetrics(ctx)
 }
 
+// CollectWorkloadMetrics collects metrics from Kubernetes workloads.
 func (wc *WorkloadCollector) CollectWorkloadMetrics(ctx context.Context) (*models.WorkloadMetrics, error) {
 	metrics := &models.WorkloadMetrics{}
 
@@ -75,6 +83,7 @@ func (wc *WorkloadCollector) CollectWorkloadMetrics(ctx context.Context) (*model
 	return metrics, nil
 }
 
+// collectDeploymentMetrics collects metrics from Kubernetes deployments.
 func (wc *WorkloadCollector) collectDeploymentMetrics(ctx context.Context) ([]models.DeploymentMetrics, error) {
 	deployments, err := wc.clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -95,14 +104,24 @@ func (wc *WorkloadCollector) parseDeploymentMetrics(d appsv1.Deployment) models.
 	if d.Labels == nil {
 		d.Labels = make(map[string]string)
 	}
+
+	conditions := make([]string, 0)
+	for _, condition := range d.Status.Conditions {
+		conditions = append(conditions, string(condition.Type))
+	}
+
 	return models.DeploymentMetrics{
-		Name:              d.Name,
-		Namespace:         d.Namespace,
-		Replicas:          *d.Spec.Replicas,
-		ReadyReplicas:     d.Status.ReadyReplicas,
-		UpdatedReplicas:   d.Status.UpdatedReplicas,
-		AvailableReplicas: d.Status.AvailableReplicas,
-		Labels:            d.Labels,
+		Name:               d.Name,
+		Namespace:          d.Namespace,
+		Replicas:           *d.Spec.Replicas,
+		ReadyReplicas:      d.Status.ReadyReplicas,
+		UpdatedReplicas:    d.Status.UpdatedReplicas,
+		AvailableReplicas:  d.Status.AvailableReplicas,
+		Labels:             d.Labels,
+		CollisionCount:     d.Status.CollisionCount,
+		Conditions:         conditions,
+		Generation:         d.Generation,
+		ObservedGeneration: d.Status.ObservedGeneration,
 	}
 }
 
@@ -125,14 +144,25 @@ func (wc *WorkloadCollector) parseStatefulSetMetrics(s appsv1.StatefulSet) model
 	if s.Labels == nil {
 		s.Labels = make(map[string]string)
 	}
+
+	conditions := make([]string, 0)
+	for _, condition := range s.Status.Conditions {
+		conditions = append(conditions, string(condition.Type))
+	}
+
 	return models.StatefulSetMetrics{
-		Name:            s.Name,
-		Namespace:       s.Namespace,
-		Replicas:        *s.Spec.Replicas,
-		ReadyReplicas:   s.Status.ReadyReplicas,
-		CurrentReplicas: s.Status.CurrentReplicas,
-		UpdatedReplicas: s.Status.UpdatedReplicas,
-		Labels:          s.Labels,
+		Name:               s.Name,
+		Namespace:          s.Namespace,
+		Replicas:           *s.Spec.Replicas,
+		ReadyReplicas:      s.Status.ReadyReplicas,
+		CurrentReplicas:    s.Status.CurrentReplicas,
+		UpdatedReplicas:    s.Status.UpdatedReplicas,
+		AvailableReplicas:  s.Status.AvailableReplicas,
+		Labels:             s.Labels,
+		CollisionCount:     s.Status.CollisionCount,
+		Conditions:         conditions,
+		Generation:         s.Generation,
+		ObservedGeneration: s.Status.ObservedGeneration,
 	}
 }
 
@@ -155,6 +185,18 @@ func (wc *WorkloadCollector) parseDaemonSetMetrics(d appsv1.DaemonSet) models.Da
 	if d.Labels == nil {
 		d.Labels = make(map[string]string)
 	}
+
+	conditions := make([]models.DaemonSetCondition, 0)
+	for _, condition := range d.Status.Conditions {
+		conditions = append(conditions, models.DaemonSetCondition{
+			Type:               string(condition.Type),
+			Status:             string(condition.Status),
+			LastTransitionTime: &condition.LastTransitionTime.Time,
+			Reason:             condition.Reason,
+			Message:            condition.Message,
+		})
+	}
+
 	return models.DaemonSetMetrics{
 		Name:                   d.Name,
 		Namespace:              d.Namespace,
@@ -163,7 +205,12 @@ func (wc *WorkloadCollector) parseDaemonSetMetrics(d appsv1.DaemonSet) models.Da
 		NumberReady:            d.Status.NumberReady,
 		UpdatedNumberScheduled: d.Status.UpdatedNumberScheduled,
 		NumberAvailable:        d.Status.NumberAvailable,
+		NumberUnavailable:      d.Status.NumberUnavailable,
+		NumberMisscheduled:     d.Status.NumberMisscheduled,
 		Labels:                 d.Labels,
+		Generation:             d.Generation,
+		ObservedGeneration:     d.Status.ObservedGeneration,
+		Conditions:             conditions,
 	}
 }
 
@@ -186,33 +233,85 @@ func (wc *WorkloadCollector) parseJobMetrics(j batchv1.Job) models.JobMetrics {
 	if j.Labels == nil {
 		j.Labels = make(map[string]string)
 	}
+
+	conditions := make([]models.JobCondition, 0)
+	for _, condition := range j.Status.Conditions {
+		conditions = append(conditions, models.JobCondition{
+			Type:               string(condition.Type),
+			Status:             string(condition.Status),
+			LastProbeTime:      &condition.LastProbeTime.Time,
+			LastTransitionTime: &condition.LastTransitionTime.Time,
+			Reason:             condition.Reason,
+			Message:            condition.Message,
+		})
+	}
+
 	metrics := models.JobMetrics{
-		Name:      j.Name,
-		Namespace: j.Namespace,
-		Labels:    j.Labels,
-		Completions: func() *int32 {
-			if j.Spec.Completions != nil {
-				return j.Spec.Completions
-			}
-			return nil
-		}(),
-		Parallelism: func() *int32 {
-			if j.Spec.Parallelism != nil {
-				return j.Spec.Parallelism
-			}
-			return nil
-		}(),
-		Active:    j.Status.Active,
-		Succeeded: j.Status.Succeeded,
-		Failed:    j.Status.Failed,
+		Name:             j.Name,
+		Namespace:        j.Namespace,
+		Labels:           j.Labels,
+		Active:           j.Status.Active,
+		Succeeded:        j.Status.Succeeded,
+		Failed:           j.Status.Failed,
+		Status:           getJobStatus(j.Status),
+		CompletedIndexes: j.Status.CompletedIndexes,
+		Conditions:       conditions,
+		Generation:       j.Generation,
 	}
 
+	// Add existing time-related fields
 	if j.Status.StartTime != nil {
-		metrics.StartTime = j.Status.StartTime.Time
+		metrics.StartTime = &j.Status.StartTime.Time
+	}
+	if j.Status.CompletionTime != nil {
+		metrics.CompletionTime = &j.Status.CompletionTime.Time
+	}
+	if metrics.StartTime != nil {
+		endTime := time.Now()
+		if metrics.CompletionTime != nil {
+			endTime = *metrics.CompletionTime
+		}
+		duration := endTime.Sub(*metrics.StartTime)
+		metrics.Duration = &duration
 	}
 
-	if j.Status.CompletionTime != nil {
-		metrics.CompletionTime = j.Status.CompletionTime.Time
+	metrics.ResourceMetrics = wc.getJobResourceMetrics(j)
+	return metrics
+}
+
+// Helper function to get job status
+func getJobStatus(status batchv1.JobStatus) string {
+	switch {
+	case status.Succeeded > 0:
+		return "Succeeded"
+	case status.Failed > 0:
+		return "Failed"
+	case status.Active > 0:
+		return "Active"
+	default:
+		return "Pending"
+	}
+}
+
+// Helper function to get resource metrics for a job
+func (wc *WorkloadCollector) getJobResourceMetrics(job batchv1.Job) models.ResourceMetrics {
+	metrics := models.ResourceMetrics{}
+
+	if job.Spec.Template.Spec.Containers == nil {
+		return metrics
+	}
+
+	for _, container := range job.Spec.Template.Spec.Containers {
+		if container.Resources.Requests != nil {
+			metrics.CPU += container.Resources.Requests.Cpu().MilliValue()
+			metrics.Memory += container.Resources.Requests.Memory().Value()
+			if storage := container.Resources.Requests.Storage(); storage != nil {
+				metrics.Storage += storage.Value()
+			}
+			if ephemeral, ok := container.Resources.Requests[v1.ResourceEphemeralStorage]; ok {
+				metrics.EphemeralStorage += ephemeral.Value()
+			}
+		}
 	}
 
 	return metrics

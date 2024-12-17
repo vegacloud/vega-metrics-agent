@@ -8,6 +8,8 @@
 // by the Apache License, Version 2.0, included in the file
 // licenses/APL.txt.
 // File: pkg/collectors/daemonsets.go
+
+// Package collectors hosts the collection functions
 package collectors
 
 import (
@@ -40,38 +42,35 @@ func NewDaemonSetCollector(clientset *kubernetes.Clientset, cfg *config.Config) 
 }
 
 // CollectMetrics collects metrics for daemon sets
-func (dsc *DaemonSetCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
-	metrics, err := dsc.CollectDaemonSetMetrics(ctx)
+func (dc *DaemonSetCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
+	daemonsets, err := dc.clientset.AppsV1().DaemonSets("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list daemonsets: %w", err)
 	}
-	logrus.Debug("Successfully collected daemon set metrics")
+
+	metrics := make([]models.DaemonSetMetrics, 0, len(daemonsets.Items))
+	for _, ds := range daemonsets.Items {
+		metric := dc.convertDaemonSetToMetrics(&ds)
+		metrics = append(metrics, metric)
+	}
+
+	logrus.Debugf("Collected metrics for %d daemonsets", len(metrics))
 	return metrics, nil
 }
 
-// CollectDaemonSetMetrics collects metrics for all daemon sets in the cluster
-func (dsc *DaemonSetCollector) CollectDaemonSetMetrics(ctx context.Context) ([]models.DaemonSetMetrics, error) {
-	daemonSets, err := dsc.clientset.AppsV1().DaemonSets("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list daemon sets: %w", err)
+// convertDaemonSetToMetrics converts a Kubernetes DaemonSet to metrics
+func (dc *DaemonSetCollector) convertDaemonSetToMetrics(ds *appsv1.DaemonSet) models.DaemonSetMetrics {
+	conditions := make([]models.DaemonSetCondition, 0, len(ds.Status.Conditions))
+	for _, condition := range ds.Status.Conditions {
+		conditions = append(conditions, models.DaemonSetCondition{
+			Type:               string(condition.Type),
+			Status:             string(condition.Status),
+			LastTransitionTime: &condition.LastTransitionTime.Time,
+			Reason:             condition.Reason,
+			Message:            condition.Message,
+		})
 	}
-	logrus.Debugf("Successfully listed %d daemon sets", len(daemonSets.Items))
 
-	metrics := make([]models.DaemonSetMetrics, 0, len(daemonSets.Items))
-
-	for _, ds := range daemonSets.Items {
-		metrics = append(metrics, dsc.parseDaemonSetMetrics(ds))
-	}
-
-	logrus.Debugf("Collected metrics for %d daemon sets", len(metrics))
-	return metrics, nil
-}
-
-// parseDaemonSetMetrics parses metrics for a single daemon set
-func (dsc *DaemonSetCollector) parseDaemonSetMetrics(ds appsv1.DaemonSet) models.DaemonSetMetrics {
-	if ds.Labels == nil {
-		ds.Labels = make(map[string]string)
-	}
 	return models.DaemonSetMetrics{
 		Name:                   ds.Name,
 		Namespace:              ds.Namespace,
@@ -80,6 +79,15 @@ func (dsc *DaemonSetCollector) parseDaemonSetMetrics(ds appsv1.DaemonSet) models
 		NumberReady:            ds.Status.NumberReady,
 		UpdatedNumberScheduled: ds.Status.UpdatedNumberScheduled,
 		NumberAvailable:        ds.Status.NumberAvailable,
+		NumberUnavailable:      ds.Status.NumberUnavailable,
+		NumberMisscheduled:     ds.Status.NumberMisscheduled,
 		Labels:                 ds.Labels,
+		Annotations:            ds.Annotations,
+		CreationTimestamp:      &ds.CreationTimestamp.Time,
+		CollisionCount:         ds.Status.CollisionCount,
+		Status: models.DaemonSetStatus{
+			ObservedGeneration: ds.Status.ObservedGeneration,
+		},
+		Conditions: conditions,
 	}
 }

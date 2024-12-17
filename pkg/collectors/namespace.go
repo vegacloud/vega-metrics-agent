@@ -8,11 +8,14 @@
 // by the Apache License, Version 2.0, included in the file
 // licenses/APL.txt.
 // File: pkg/collectors/namespace.go
+
+// Package collectors hosts the collection functions
 package collectors
 
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
@@ -23,11 +26,13 @@ import (
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/models"
 )
 
+// NamespaceCollector collects metrics from Kubernetes namespaces.
 type NamespaceCollector struct {
 	clientset *kubernetes.Clientset
 	config    *config.Config
 }
 
+// NewNamespaceCollector creates a new NamespaceCollector.
 func NewNamespaceCollector(clientset *kubernetes.Clientset, cfg *config.Config) *NamespaceCollector {
 	logrus.Debug("Creating new NamespaceCollector")
 	return &NamespaceCollector{
@@ -36,11 +41,13 @@ func NewNamespaceCollector(clientset *kubernetes.Clientset, cfg *config.Config) 
 	}
 }
 
+// CollectMetrics collects metrics from Kubernetes namespaces.
 func (nc *NamespaceCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
 	logrus.Debug("Collecting namespace metrics")
 	return nc.CollectNamespaceMetrics(ctx)
 }
 
+// CollectNamespaceMetrics collects metrics from Kubernetes namespaces.
 func (nc *NamespaceCollector) CollectNamespaceMetrics(ctx context.Context) ([]models.NamespaceMetrics, error) {
 	namespaces, err := nc.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -63,6 +70,7 @@ func (nc *NamespaceCollector) CollectNamespaceMetrics(ctx context.Context) ([]mo
 	return namespaceMetrics, nil
 }
 
+// collectSingleNamespaceMetrics collects metrics from a single Kubernetes namespace.
 func (nc *NamespaceCollector) collectSingleNamespaceMetrics(
 	ctx context.Context,
 	ns v1.Namespace,
@@ -70,10 +78,33 @@ func (nc *NamespaceCollector) collectSingleNamespaceMetrics(
 	if ns.Labels == nil {
 		ns.Labels = make(map[string]string)
 	}
+
 	metrics := models.NamespaceMetrics{
-		Name:   ns.Name,
-		Status: string(ns.Status.Phase),
-		Labels: ns.Labels,
+		Name:              ns.Name,
+		Status:            string(ns.Status.Phase),
+		Phase:             string(ns.Status.Phase),
+		CreationTimestamp: ns.CreationTimestamp.Time,
+		DeletionTimestamp: nil,
+		Finalizers:        ns.Finalizers,
+		Labels:            ns.Labels,
+		Annotations:       ns.Annotations,
+	}
+
+	// Set deletion timestamp if exists
+	if ns.DeletionTimestamp != nil {
+		deletionTime := ns.DeletionTimestamp.Time
+		metrics.DeletionTimestamp = &deletionTime
+	}
+
+	// Convert conditions
+	for _, condition := range ns.Status.Conditions {
+		metrics.Conditions = append(metrics.Conditions, models.NamespaceCondition{
+			Type:               string(condition.Type),
+			Status:             string(condition.Status),
+			LastTransitionTime: &condition.LastTransitionTime.Time,
+			Reason:             condition.Reason,
+			Message:            condition.Message,
+		})
 	}
 
 	// Collect ResourceQuotas
@@ -107,11 +138,13 @@ func (nc *NamespaceCollector) collectSingleNamespaceMetrics(
 	return metrics, nil
 }
 
+// parseResourceQuota parses metrics from a Kubernetes resource quota.
 func (nc *NamespaceCollector) parseResourceQuota(quota v1.ResourceQuota) models.ResourceQuotaMetrics {
 	metrics := models.ResourceQuotaMetrics{
 		Name: quota.Name,
 	}
 
+	// Parse basic resources
 	for resourceName, hard := range quota.Status.Hard {
 		used := quota.Status.Used[resourceName]
 		metrics.Resources = append(metrics.Resources, models.ResourceMetric{
@@ -121,8 +154,47 @@ func (nc *NamespaceCollector) parseResourceQuota(quota v1.ResourceQuota) models.
 		})
 	}
 
-	logrus.Debugf("Parsed resource quota %s", quota.Name)
+	// Parse quota scopes
+	if len(quota.Spec.Scopes) > 0 {
+		for _, scope := range quota.Spec.Scopes {
+			scopeMetric := models.QuotaScopeMetrics{
+				ScopeName: string(scope),
+			}
+			if quota.Spec.ScopeSelector != nil && quota.Spec.ScopeSelector.MatchExpressions != nil {
+				for _, expr := range quota.Spec.ScopeSelector.MatchExpressions {
+					scopeMetric.MatchScopes = append(scopeMetric.MatchScopes, string(expr.Operator))
+				}
+			}
+			metrics.Scopes = append(metrics.Scopes, scopeMetric)
+		}
+	}
+
+	// Parse priority class quotas
+	for resourceName, hard := range quota.Status.Hard {
+		if isPriorityClassResource(string(resourceName)) {
+			priorityClass := extractPriorityClass(string(resourceName))
+			metrics.PriorityQuotas = append(metrics.PriorityQuotas, models.PriorityClassQuotaMetrics{
+				PriorityClass: priorityClass,
+				Hard:          map[string]string{string(resourceName): hard.ToUnstructured().(string)},
+				Used:          map[string]string{string(resourceName): quota.Status.Used[resourceName].ToUnstructured().(string)},
+			})
+		}
+	}
+
 	return metrics
+}
+
+// Helper functions
+func isPriorityClassResource(resource string) bool {
+	return strings.HasPrefix(resource, "count/pods.") && strings.Contains(resource, "priorityclass")
+}
+
+func extractPriorityClass(resource string) string {
+	parts := strings.Split(resource, ".")
+	if len(parts) > 1 {
+		return parts[len(parts)-1]
+	}
+	return ""
 }
 
 func (nc *NamespaceCollector) parseLimitRange(lr v1.LimitRange) models.LimitRangeMetrics {

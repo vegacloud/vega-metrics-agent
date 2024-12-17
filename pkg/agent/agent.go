@@ -22,8 +22,6 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"k8s.io/client-go/kubernetes"
-	metricsclientset "k8s.io/metrics/pkg/client/clientset/versioned"
 
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/collectors"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
@@ -41,53 +39,53 @@ type MetricsAgent struct {
 
 // NewMetricsAgent creates a new MetricsAgent
 func NewMetricsAgent(cfg *config.Config,
-	clientset kubernetes.Interface,
-	metricsClientset metricsclientset.Interface,
 	logger *logrus.Entry,
-	k8sConfig utils.K8sClientConfig,
 ) (*MetricsAgent, error) {
 	logger = logger.WithField("function", "NewMetricsAgent")
 
-	k8sClientset, ok := clientset.(*kubernetes.Clientset)
-	if !ok {
-		return nil, fmt.Errorf("invalid clientset type: expected *kubernetes.Clientset, got %T", clientset)
-	}
+	// Add debug logging for initial configuration
+	logger.Debugf("Initializing MetricsAgent with config: VegaInsecure=%v, OrgSlug=%s, ClusterName=%s",
+		cfg.VegaInsecure, cfg.VegaOrgSlug, cfg.VegaClusterName)
+
 	// Create an empty map to hold the collectors
 	collectorsMap := make(map[string]collectors.Collector)
-	metricsClientsetImpl, ok := metricsClientset.(*metricsclientset.Clientset)
-	if !ok {
-		return nil, fmt.Errorf(
-			"invalid metrics clientset type: expected *metricsclientset.Clientset, got %T",
-			metricsClientset,
-		)
-	}
-
-	// Initialize the NodeCollector
-	nodeCollector, err := collectors.NewNodeCollector(k8sClientset, metricsClientsetImpl, cfg)
+	logger.Debug("Initializing collectors")
+	clientConfig, err := utils.GetExistingClientConfig()
 	if err != nil {
-		logger.Fatalf("Failed to create NodeCollector: %v", err)
+		return nil, fmt.Errorf("failed to get existing client config: %w", err)
 	}
-	collectorsMap["node"] = nodeCollector
+	// // Initialize the NodeCollector
+	// logger.Debug("Creating NodeCollector")
+	// nodeCollector, err := collectors.NewNodeCollector(k8sClientset.(*kubernetes.Clientset), cfg)
+	// if err != nil {
+	// 	logger.Debugf("NodeCollector creation failed: %v", err)
+	// 	return nil, fmt.Errorf("failed to create NodeCollector: %w", err)
+	// }
+	// collectorsMap["node"] = nodeCollector
+	// logger.Debug("Successfully created NodeCollector")
 
-	// Initialize the PodCollector (assuming it doesn't return an error)
-	podCollector := collectors.NewPodCollector(k8sClientset, metricsClientsetImpl, cfg)
-	collectorsMap["pod"] = podCollector
+	// Initialize other collectors
+	// podCollector := collectors.NewPodCollector(k8sClientset.(*kubernetes.Clientset), cfg)
+	// collectorsMap["pod"] = podCollector
+	// Ensure we're passing the properly configured client
 
-	// Initialize the ClusterCollector (assuming it doesn't return an error)
-	clusterCollector := collectors.NewClusterCollector(k8sClientset, cfg, k8sConfig)
+	clusterCollector := collectors.NewClusterCollector(
+		clientConfig.Clientset, //
+		cfg,
+	)
 	collectorsMap["cluster"] = clusterCollector
 
-	// Continue initializing other collectors similarly
-	collectorsMap["pv"] = collectors.NewPersistentVolumeCollector(k8sClientset, cfg)
-	collectorsMap["namespace"] = collectors.NewNamespaceCollector(k8sClientset, cfg)
-	collectorsMap["workload"] = collectors.NewWorkloadCollector(k8sClientset, cfg)
-	collectorsMap["network"] = collectors.NewNetworkingCollector(k8sClientset, cfg)
-	collectorsMap["job"] = collectors.NewJobCollector(k8sClientset, cfg)
-	collectorsMap["cronjob"] = collectors.NewCronJobCollector(k8sClientset, cfg)
-	collectorsMap["HPA"] = collectors.NewHPACollector(k8sClientset, cfg)
-	collectorsMap["replicationController"] = collectors.NewReplicationControllerCollector(k8sClientset, cfg)
+	// collectorsMap["pv"] = collectors.NewPersistentVolumeCollector(k8sClientset.(*kubernetes.Clientset), cfg)
+	// collectorsMap["namespace"] = collectors.NewNamespaceCollector(k8sClientset.(*kubernetes.Clientset), cfg)
+	// collectorsMap["workload"] = collectors.NewWorkloadCollector(k8sClientset.(*kubernetes.Clientset), cfg)
+	// collectorsMap["network"] = collectors.NewNetworkingCollector(k8sClientset.(*kubernetes.Clientset), cfg)
+	// collectorsMap["job"] = collectors.NewJobCollector(k8sClientset.(*kubernetes.Clientset), cfg)
+	// collectorsMap["cronjob"] = collectors.NewCronJobCollector(k8sClientset.(*kubernetes.Clientset), cfg)
+	// collectorsMap["hpa"] = collectors.NewHPACollector(k8sClientset.(*kubernetes.Clientset), cfg)
+	// collectorsMap["replicationController"] = collectors.NewReplicationControllerCollector(k8sClientset.(*kubernetes.Clientset), cfg)
+	// collectorsMap["storageclass"] = collectors.NewStorageClassCollector(k8sClientset.(*kubernetes.Clientset), cfg)
+	// collectorsMap["replicasets"] = collectors.NewReplicaSetCollector(k8sClientset.(*kubernetes.Clientset), cfg)
 
-	collectorsMap["replicasets"] = collectors.NewReplicaSetCollector(k8sClientset, cfg)
 	logger.Debugf("loaded %v collectors", len(collectorsMap))
 
 	// Initialize the uploader
@@ -95,18 +93,21 @@ func NewMetricsAgent(cfg *config.Config,
 	if err != nil {
 		return nil, fmt.Errorf("failed to create S3 uploader: %w", err)
 	}
+
 	ma := &MetricsAgent{
 		config:     cfg,
 		collectors: collectorsMap,
 		uploader:   uploader,
 		logger:     logger.WithField("component", "MetricsAgent"),
 		httpClient: &http.Client{
-			Timeout: 90 * time.Second, // Set a timeout for HTTP requests
+			Timeout: 90 * time.Second,
 		},
 	}
+
 	if cfg.ShouldAgentCheckIn {
-		logrus.Info("Checking in with the metrics server")
+		logger.Debug("Attempting to check in with the metrics server")
 		if err := ma.Checkin(context.Background()); err != nil {
+			logger.WithError(err).Debug("Checkin attempt failed with detailed error")
 			logrus.WithError(err).Error("Failed to check in with the metrics server")
 		}
 	}
@@ -174,7 +175,7 @@ func (ma *MetricsAgent) collectAndUploadMetrics(ctx context.Context) error {
 	startTime := time.Now()
 	if ma.config.ShouldAgentCheckIn {
 		go func() {
-			logrus.Info("Checking in with the metrics server")
+			logrus.Info("Starting Kubernetes Data Collection")
 			if err := ma.Checkin(ctx); err != nil {
 				logrus.WithError(err).Error("Failed to check in with the metrics server")
 			}

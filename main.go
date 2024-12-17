@@ -23,7 +23,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"k8s.io/client-go/kubernetes"
-	metricsv "k8s.io/metrics/pkg/client/clientset/versioned"
+	"k8s.io/client-go/rest"
 
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/agent"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
@@ -107,24 +107,13 @@ func runRootCmd(cmd *cobra.Command, _ []string) error {
 		logrus.Debugf("Configuration: %+v", cfg)
 	}
 
-	ctx := context.Background()
-	k8sClientConfig, err := initializeKubernetesClients(ctx, cfg)
-	if err != nil {
-		return err
-	}
-
-	metricsClientset, err := metricsv.NewForConfig(k8sClientConfig.Config)
-	if err != nil {
-		return fmt.Errorf("failed to create metrics client: %w", err)
-	}
-
 	logger := logrus.WithFields(logrus.Fields{
 		"client_id":    cfg.VegaClientID,
 		"org_slug":     cfg.VegaOrgSlug,
 		"cluster_name": cfg.VegaClusterName,
 	})
 
-	if err := startMetricsAgent(cfg, k8sClientConfig.Clientset, metricsClientset, logger, *k8sClientConfig); err != nil {
+	if err := startMetricsAgent(cfg, logger); err != nil {
 		return err
 	}
 
@@ -143,47 +132,120 @@ func initializeLogging(cfg *config.Config) {
 	})
 }
 
-func initializeKubernetesClients(ctx context.Context, cfg *config.Config) (*utils.K8sClientConfig, error) {
-	clientConfig, err := utils.GetClientConfig(ctx, cfg)
+func initializeKubernetesClients(ctx context.Context, cfg *config.Config, logger *logrus.Entry) (*kubernetes.Clientset, *utils.K8sClientConfig, error) {
+	logger.Debug("Starting Kubernetes client initialization...")
+
+	// Get Kubernetes client configuration
+	logger.Debug("Getting Kubernetes client configuration...")
+	// Add functionality to verify we can access the service token
+	token, err := os.ReadFile(cfg.VegaBearerTokenPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
+		return nil, nil, fmt.Errorf("failed to read service token: %w", err)
 	}
-	return clientConfig, nil
+	logger.WithField("token", string(token)).Debug("Successfully read service token")
+
+	k8sConfig, err := utils.GetClientConfig(ctx, cfg)
+	if err != nil {
+		logger.WithError(err).Error("Failed to get Kubernetes client configuration")
+		return nil, nil, fmt.Errorf("failed to get Kubernetes client config: %w", err)
+	}
+
+	logger.WithFields(logrus.Fields{
+		"host":              k8sConfig.Config.Host,
+		"bearer_token_path": k8sConfig.Config.BearerTokenFile,
+		"qps":               k8sConfig.Config.QPS,
+		"burst":             k8sConfig.Config.Burst,
+		"timeout":           k8sConfig.Config.Timeout,
+	}).Debug("Successfully obtained Kubernetes client configuration")
+
+	return k8sConfig.Clientset, k8sConfig, nil
 }
 
-func startMetricsAgent(cfg *config.Config,
-	clientset kubernetes.Interface,
-	metricsClientset *metricsv.Clientset,
-	logger *logrus.Entry,
-	k8sConfig utils.K8sClientConfig,
-) error {
-	metricsAgent, err := agent.NewMetricsAgent(cfg, clientset, metricsClientset, logger, k8sConfig)
+func startMetricsAgent(cfg *config.Config, logger *logrus.Entry) error {
+	logger.Debug("Initializing metrics agent...")
+
+	// Configure TLS transport
+	logger.Debug("Configuring TLS transport...")
+	transport, err := rest.TransportFor(&rest.Config{
+		TLSClientConfig: rest.TLSClientConfig{
+			Insecure: cfg.VegaInsecure,
+		},
+	})
 	if err != nil {
+		logger.WithError(err).Error("Failed to create TLS transport")
+		return fmt.Errorf("failed to create transport: %w", err)
+	}
+	logger.WithField("insecure", cfg.VegaInsecure).Debug("Successfully created TLS transport")
+
+	// Initialize Kubernetes clients
+	clientset, k8sConfig, err := initializeKubernetesClients(context.Background(), cfg, logger)
+	if err != nil {
+		return err
+	}
+
+	// Add detailed k8s config logging here
+	logger.WithFields(logrus.Fields{
+		"cluster_host_url":      k8sConfig.ClusterHostURL,
+		"cluster_uid":           k8sConfig.ClusterUID,
+		"cluster_version":       k8sConfig.ClusterVersion,
+		"namespace":             k8sConfig.Namespace,
+		"use_in_cluster_config": k8sConfig.UseInClusterConfig,
+		"qps":                   k8sConfig.Config.QPS,
+		"burst":                 k8sConfig.Config.Burst,
+		"timeout":               k8sConfig.Config.Timeout,
+		"bearer_token_file":     k8sConfig.Config.BearerTokenFile,
+		"ca_file":               k8sConfig.Config.CAFile,
+		"server_name":           k8sConfig.Config.ServerName,
+		"insecure_skip_verify":  k8sConfig.Config.Insecure,
+	}).Info("Kubernetes configuration details")
+
+	// Configure TLS for the REST client
+	if client, ok := clientset.CoreV1().RESTClient().(*rest.RESTClient); ok {
+		logger.Debug("Configuring TLS for kubelet client")
+		client.Client.Transport = transport
+		logger.WithFields(logrus.Fields{
+			"insecure":       cfg.VegaInsecure,
+			"transport_type": fmt.Sprintf("%T", transport),
+		}).Debug("Successfully configured TLS for kubelet client")
+	} else {
+		logger.Warn("Unable to configure TLS: unexpected REST client type")
+	}
+
+	// Create metrics agent
+	logger.Debug("Creating metrics agent...")
+	// os.Exit(1)
+	metricsAgent, err := agent.NewMetricsAgent(cfg, logger)
+	if err != nil {
+		logger.WithError(err).Error("Failed to create metrics agent")
 		return fmt.Errorf("failed to create metrics agent: %w", err)
 	}
+	logger.Debug("Successfully created metrics agent")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Start health check server
 	go func() {
-		logrus.Println("Starting liveness probe server on :80")
+		logger.Info("Starting liveness probe server on :80")
 		if err := health.ServerHealthCheck(ctx); err != nil {
-			logger.Error("Health check startup failed")
+			logger.WithError(err).Error("Health check startup failed")
 			cancel()
 		} else {
 			logger.Info("Health check successful")
 		}
 	}()
 
+	// Handle signals
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		sig := <-sigs
-		logger.Infof("Received signal %s, initiating shutdown", sig)
+		logger.WithField("signal", sig).Info("Received signal, initiating shutdown")
 		cancel()
 	}()
 
+	logger.Info("Starting metrics agent main loop")
 	metricsAgent.Run(ctx)
 
 	return nil

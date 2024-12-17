@@ -12,13 +12,13 @@ namespace: vegacloud
 serviceAccount:
   name: vega-metrics-sa
 image:
-  repository: public.ecr.aws/c0f8b9o4/vegacloud/vega-metrics-agent
-  tag: 1.0.0
-  pullPolicy: Always
+  repository: vega-metrics-agent # Do make alldev then push to a private ecr repo to use
+  tag: 1.0.1-dev10   # DO A make alldev to build this then push to a private ecr repo to use
+  pullPolicy: IfNotPresent
 replicaCount: 1
 resources:
   requests:
-    memory: "2Gi"
+    memory: "1Gi"
     cpu: "500m"
   limits:
     memory: "4Gi"
@@ -28,15 +28,10 @@ securityContext:
   runAsNonRoot: true
   allowPrivilegeEscalation: false
 vega:
-  clientId: "XXXXX" # Log into your portal and visit settings->Client Registration to obtain this
-  clientSecret: "XXXX" # Log into your portal and visit settings->Client Registration to obtain this
-  orgSlug: "XXXX"
-  clusterName: "XXXX"
+  clientId: ""
+  clientSecret: ""
+  orgSlug: "vega"
+  clusterName: "test-cluster"
 env:
-# VEGA_POLL_INTERVAL: "120m" # Default is 60M
-# This agent requires the metrics-server to be installed in the cluster
-metrics-server:
-  enabled: true
-  namespace: kube-system
-  extraArgs:
-    - --metric-resolution=15s
+  START_COLLECTION_NOW: true
+  VEGA_INSECURE: true

@@ -7,6 +7,8 @@
 // the Business Source License, use of this software will be governed
 // by the Apache License, Version 2.0, included in the file
 // licenses/APL.txt.
+
+// Package collectors hosts the collection functions
 package collectors
 
 import (
@@ -22,11 +24,13 @@ import (
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/models"
 )
 
+// ReplicationControllerCollector collects metrics from Kubernetes replication controllers.
 type ReplicationControllerCollector struct {
 	clientset *kubernetes.Clientset
 	config    *config.Config
 }
 
+// NewReplicationControllerCollector creates a new ReplicationControllerCollector.
 func NewReplicationControllerCollector(clientset *kubernetes.Clientset,
 	cfg *config.Config) *ReplicationControllerCollector {
 	collector := &ReplicationControllerCollector{
@@ -37,6 +41,7 @@ func NewReplicationControllerCollector(clientset *kubernetes.Clientset,
 	return collector
 }
 
+// CollectMetrics collects metrics from Kubernetes replication controllers.
 func (rcc *ReplicationControllerCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
 	metrics, err := rcc.CollectReplicationControllerMetrics(ctx)
 	if err != nil {
@@ -46,6 +51,7 @@ func (rcc *ReplicationControllerCollector) CollectMetrics(ctx context.Context) (
 	return metrics, nil
 }
 
+// CollectReplicationControllerMetrics collects metrics from Kubernetes replication controllers.
 func (rcc *ReplicationControllerCollector) CollectReplicationControllerMetrics(
 	ctx context.Context) ([]models.ReplicationControllerMetrics, error) {
 	rcs, err := rcc.clientset.CoreV1().ReplicationControllers("").List(ctx, metav1.ListOptions{})
@@ -68,13 +74,33 @@ func (rcc *ReplicationControllerCollector) parseReplicationControllerMetrics(
 	if rc.Labels == nil {
 		rc.Labels = make(map[string]string)
 	}
+	if rc.Annotations == nil {
+		rc.Annotations = make(map[string]string)
+	}
+
+	conditions := make([]models.RCCondition, 0, len(rc.Status.Conditions))
+	for _, condition := range rc.Status.Conditions {
+		conditions = append(conditions, models.RCCondition{
+			Type:               string(condition.Type),
+			Status:             string(condition.Status),
+			LastTransitionTime: &condition.LastTransitionTime.Time,
+			Reason:             condition.Reason,
+			Message:            condition.Message,
+		})
+	}
+
 	metrics := models.ReplicationControllerMetrics{
-		Name:              rc.Name,
-		Namespace:         rc.Namespace,
-		Replicas:          rc.Status.Replicas,
-		ReadyReplicas:     rc.Status.ReadyReplicas,
-		AvailableReplicas: rc.Status.AvailableReplicas,
-		Labels:            rc.Labels,
+		Name:                 rc.Name,
+		Namespace:            rc.Namespace,
+		Replicas:             rc.Status.Replicas,
+		ReadyReplicas:        rc.Status.ReadyReplicas,
+		AvailableReplicas:    rc.Status.AvailableReplicas,
+		Labels:               rc.Labels,
+		ObservedGeneration:   rc.Status.ObservedGeneration,
+		FullyLabeledReplicas: rc.Status.FullyLabeledReplicas,
+		Conditions:           conditions,
+		Annotations:          rc.Annotations,
+		CreationTimestamp:    &rc.CreationTimestamp.Time,
 	}
 
 	logrus.Debugf("Parsed replication controller metrics for %s/%s", rc.Namespace, rc.Name)

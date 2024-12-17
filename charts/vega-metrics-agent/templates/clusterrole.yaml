@@ -1,138 +1,166 @@
-# Copyright 2024 Vega Cloud, Inc.
-#
-# Use of this software is governed by the Business Source License
-# included in the file licenses/BSL.txt.
-#
-# As of the Change Date specified in that file, in accordance with
-# the Business Source License, use of this software will be governed
-# by the Apache License, Version 2.0, included in the file
-# licenses/APL.txt.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: metrics-agents
+  annotations:
+    "helm.sh/hook-weight": "1"
 rules:
-  - apiGroups: [""]
-    resources:
-      - namespaces
-      - pods
-      - services
-      - nodes
-      - persistentvolumes
-      - persistentvolumeclaims
-      - endpoints
-      - events
-      - replicationcontrollers    
-      - resourcequotas      
-      - limitranges       
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
-  - apiGroups: ["apps", "autoscaling", "batch", "extensions"]
-    resources:
-      - deployments
-      - replicasets
-      - statefulsets
-      - daemonsets
-      - jobs
-      - cronjobs
-      - horizontalpodautoscalers
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["selfsubjectreviews"]
+    verbs: ["create"]
+  # Core API resources
   - apiGroups: [""]
     resources:
       - configmaps
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
-  - apiGroups: ["metrics.k8s.io"]
-    resources:
+      - endpoints
+      - events
+      - limitranges
+      - limitranges/status
+      - namespaces
+      - namespaces/finalizers
+      - namespaces/status
       - nodes
-      - pods
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
-  - apiGroups: ["networking.k8s.io"]
-    resources:
-      - ingresses               
-      - networkpolicies
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
-  - apiGroups: [""]
-    resources:
-      - services/proxy
-      - pods/proxy
+      - nodes/log
+      - nodes/metrics
       - nodes/proxy
       - nodes/stats
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
-  - apiGroups: ["policy"]
+      - nodes/stats/summary
+      - nodes/status
+      - persistentvolumeclaims
+      - persistentvolumeclaims/status
+      - persistentvolumes
+      - persistentvolumes/status
+      - pods
+      - pods/ephemeralcontainers
+      - pods/exec
+      - pods/log
+      - pods/metrics
+      - pods/portforward
+      - pods/proxy
+      - pods/stats
+      - pods/status
+      - replicationcontrollers
+      - resourcequotas
+      - resourcequotas/status
+      - serviceaccounts
+      - services
+      - services/proxy
+      - services/status
+    verbs: ["get", "list", "watch"]
+
+  # Workload resources (batch and apps)
+  - apiGroups: ["batch", "apps"]
     resources:
-      - poddisruptionbudgets
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
-  - apiGroups: ["storage.k8s.io"]
+      - cronjobs
+      - cronjobs/status
+      - daemonsets
+      - daemonsets/status
+      - deployments
+      - deployments/scale
+      - deployments/status
+      - jobs
+      - jobs/status
+      - replicasets
+      - replicasets/scale
+      - replicasets/status
+      - statefulsets
+      - statefulsets/scale
+      - statefulsets/status
+    verbs: ["get", "list", "watch"]
+
+  # Networking resources (networking.k8s.io and extensions)
+  - apiGroups: ["networking.k8s.io", "extensions"]
+    resources:
+      - ingresses
+      - ingresses/status
+      - ingressclasses
+      - networkpolicies
+      - networkpolicies/status
+    verbs: ["get", "list", "watch"]
+
+  # Metrics resources
+  - apiGroups: ["metrics.k8s.io", "custom.metrics.k8s.io", "external.metrics.k8s.io", "pohpa.metrics.k8s.io"]
+    resources:
+      - "*"
+      - pods/recommendations
+    verbs: ["get", "list", "watch"]
+
+  # Autoscaling resources
+  - apiGroups: ["autoscaling", "autoscaling.k8s.io"]
+    resources:
+      - horizontalpodautoscalers
+      - horizontalpodautoscalers/scale
+      - horizontalpodautoscalers/status
+      - verticalpodautoscalers
+      - verticalpodautoscalers/status
+    verbs: ["get", "list", "watch"]
+
+  # Storage & Snapshot & CSI resources
+  - apiGroups: ["storage.k8s.io", "snapshot.storage.k8s.io", "csi.storage.k8s.io"]
     resources:
       - storageclasses
       - volumeattachments
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
+      - volumeattachments/status
+      - csidrivers
+      - csinodes
+      - csistoragecapacities
+      - volumeattributes
+      - volumesnapshots
+      - volumesnapshots/status
+      - volumesnapshotcontents
+      - volumesnapshotclasses
+      - csiservices
+    verbs: ["get", "list", "watch"]
+
+  # Security resources (policy and security.k8s.io)
+  - apiGroups: ["policy", "security.k8s.io"]
+    resources:
+      - poddisruptionbudgets
+      - poddisruptionbudgets/status
+      - podlabels
+      - podmetrics
+      - podsecuritypolicies
+      - securitycontextconstraints
+    verbs: ["get", "list", "watch"]
+
+  # Coordination for node leases
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch"]
+
+  # Node resources
+  - apiGroups: ["node.k8s.io"]
+    resources:
+      - runtimeclasses
+      - runtimeclasses/status
+    verbs: ["get", "list", "watch"]
+
+  # GPU resources
+  - apiGroups: ["nvidia.com"]
+    resources:
+      - gpus
+      - podgpus
+    verbs: ["get", "list", "watch"]
+
+  # Topology
+  - apiGroups: ["topology.kubernetes.io"]
+    resources:
+      - nodes
+      - noderesourcetopologies
+      - topologyspreadconstraints
+    verbs: ["get", "list", "watch"]
+
+  # Events.k8s.io
   - apiGroups: ["events.k8s.io"]
-    resources:
-      - events
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
-  - apiGroups: ["external.metrics.k8s.io"]
-    resources:
-      - "*"
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
-  - apiGroups: [""]
-    resources:
-      - nodes/metrics
-      - nodes/stats
-      - pods/metrics
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
-  - apiGroups: ["apiextensions.k8s.io"]
-    resources:
-      - customresourcedefinitions
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
-  - apiGroups: [""]
-    resources:
-      - namespaces/finalizers
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
-  - apiGroups: [""]
-    resources:
-      - pods/log
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
 
-
+  # Kubelet metrics and stats (NonResourceURLs)
+  - nonResourceURLs:
+      - "/metrics"
+      - "/metrics/cadvisor"
+      - "/metrics/probes"
+      - "/metrics/resource"
+      - "/stats/*"
+      - "/stats/summary"
+    verbs: ["get"]

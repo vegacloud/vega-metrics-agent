@@ -14,6 +14,9 @@ metadata:
   namespace: "{{ .Values.namespace }}"
   labels:
     app: metrics-agent
+  annotations:
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-depends-on": "pre-install"
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -25,14 +28,20 @@ spec:
         app: metrics-agent
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
-      automountServiceAccountToken: true
+      automountServiceAccountToken: true     
+      initContainers:
+        - name: wait-for-permissions
+          image: bitnami/kubectl:1.30.7
+          command: ['sh', '-c', 'until kubectl auth can-i list pods --all-namespaces; do echo waiting for permissions; sleep 2; done']
       containers:
         - name: metrics-agent
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: "{{ .Values.image.pullPolicy }}"
           args:
-            - 'kubernetes'
-          env:
+            - 'kubernetes'          
+          env:          
+            - name: KUBERNETES_CLIENT_LOG_LEVEL
+              value: "8"
             - name: VEGA_CLIENT_ID
               valueFrom:
                 secretKeyRef:

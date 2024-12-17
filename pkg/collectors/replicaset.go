@@ -7,6 +7,8 @@
 // the Business Source License, use of this software will be governed
 // by the Apache License, Version 2.0, included in the file
 // licenses/APL.txt.
+
+// Package collectors hosts the collection functions
 package collectors
 
 import (
@@ -71,12 +73,33 @@ func (rsc *ReplicaSetCollector) parseReplicaSetMetrics(rs appsv1.ReplicaSet) mod
 	if rs.Labels == nil {
 		rs.Labels = make(map[string]string)
 	}
+	if rs.Annotations == nil {
+		rs.Annotations = make(map[string]string)
+	}
+
+	conditions := make([]models.RSCondition, 0, len(rs.Status.Conditions))
+	for _, condition := range rs.Status.Conditions {
+		conditions = append(conditions, models.RSCondition{
+			Type:               string(condition.Type),
+			Status:             string(condition.Status),
+			LastTransitionTime: &condition.LastTransitionTime.Time,
+			Reason:             condition.Reason,
+			Message:            condition.Message,
+		})
+	}
+
 	return models.ReplicaSetMetrics{
-		Name:              rs.Name,
-		Namespace:         rs.Namespace,
-		Replicas:          *rs.Spec.Replicas,
-		ReadyReplicas:     rs.Status.ReadyReplicas,
-		AvailableReplicas: rs.Status.AvailableReplicas,
-		Labels:            rs.Labels,
+		Name:                 rs.Name,
+		Namespace:            rs.Namespace,
+		Replicas:             *rs.Spec.Replicas,
+		ReadyReplicas:        rs.Status.ReadyReplicas,
+		AvailableReplicas:    rs.Status.AvailableReplicas,
+		CurrentReplicas:      rs.Status.Replicas,
+		FullyLabeledReplicas: rs.Status.FullyLabeledReplicas,
+		ObservedGeneration:   rs.Status.ObservedGeneration,
+		Conditions:           conditions,
+		Labels:               rs.Labels,
+		Annotations:          rs.Annotations,
+		CreationTimestamp:    &rs.CreationTimestamp.Time,
 	}
 }
