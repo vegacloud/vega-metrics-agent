@@ -14,7 +14,7 @@ package collectors
 
 import (
 	"context"
-	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -34,47 +34,73 @@ type JobCollector struct {
 
 // NewJobCollector creates a new JobCollector.
 func NewJobCollector(clientset *kubernetes.Clientset, cfg *config.Config) *JobCollector {
-	// logrus.Debug("Starting JobCollector")
-	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
-	// 		TLSClientConfig: &tls.Config{
-	// 			InsecureSkipVerify: cfg.VegaInsecure,
-	// 		},
-	// 	}
-	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
-	// 		string(token),
-	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
-	// 	)
-	// }
-	logrus.Debug("JobCollector created successfully")
-	return &JobCollector{
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in NewJobCollector")
+		}
+	}()
+
+	logrus.Debug("Starting JobCollector")
+	collector := &JobCollector{
 		clientset: clientset,
 		config:    cfg,
 	}
-
+	logrus.Debug("JobCollector created successfully")
+	return collector
 }
 
 // CollectMetrics collects metrics from Kubernetes jobs.
 func (jc *JobCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in JobCollector.CollectMetrics")
+		}
+	}()
+
 	metrics, err := jc.CollectJobMetrics(ctx)
 	if err != nil {
-		return nil, err
+		logrus.WithFields(logrus.Fields{
+			"error": err,
+		}).Error("Failed to collect job metrics")
+		return []models.JobMetrics{}, nil
 	}
-	logrus.Debug("Successfully collected job metrics")
+
+	logrus.WithField("count", len(metrics)).Debug("Successfully collected job metrics")
 	return metrics, nil
 }
 
 // CollectJobMetrics collects metrics from Kubernetes jobs.
 func (jc *JobCollector) CollectJobMetrics(ctx context.Context) ([]models.JobMetrics, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in JobCollector.CollectJobMetrics")
+		}
+	}()
+
 	jobs, err := jc.clientset.BatchV1().Jobs("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list jobs: %w", err)
+		logrus.WithFields(logrus.Fields{
+			"error": err,
+		}).Error("Failed to list jobs")
+		return []models.JobMetrics{}, nil
 	}
-	logrus.Debugf("Successfully listed %d jobs", len(jobs.Items))
 
 	jobMetrics := make([]models.JobMetrics, 0, len(jobs.Items))
-
 	for _, job := range jobs.Items {
+		logrus.WithFields(logrus.Fields{
+			"job":       job.Name,
+			"namespace": job.Namespace,
+		}).Debug("Processing job")
+
 		if job.Labels == nil {
 			job.Labels = make(map[string]string)
 		}
@@ -108,7 +134,14 @@ func (jc *JobCollector) CollectJobMetrics(ctx context.Context) ([]models.JobMetr
 		}
 
 		jobMetrics = append(jobMetrics, metrics)
-		logrus.Debugf("Collected metrics for job %s/%s", job.Namespace, job.Name)
+		logrus.WithFields(logrus.Fields{
+			"job":       job.Name,
+			"namespace": job.Namespace,
+			"status":    status,
+			"active":    job.Status.Active,
+			"succeeded": job.Status.Succeeded,
+			"failed":    job.Status.Failed,
+		}).Debug("Collected metrics for job")
 	}
 
 	return jobMetrics, nil
@@ -125,6 +158,22 @@ func timePtr(t *metav1.Time) *time.Time {
 }
 
 func calculateJobStatus(job *batchv1.Job) string {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"job":        job.Name,
+				"namespace":  job.Namespace,
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic while calculating job status")
+		}
+	}()
+
+	if job == nil {
+		logrus.Error("Received nil job in calculateJobStatus")
+		return "Unknown"
+	}
+
 	if job.Status.Succeeded > 0 {
 		return "Completed"
 	}
@@ -141,6 +190,15 @@ func calculateJobStatus(job *batchv1.Job) string {
 }
 
 func convertJobConditions(conditions []batchv1.JobCondition) []models.JobCondition {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic while converting job conditions")
+		}
+	}()
+
 	result := make([]models.JobCondition, 0, len(conditions))
 	for _, c := range conditions {
 		condition := models.JobCondition{
@@ -157,10 +215,30 @@ func convertJobConditions(conditions []batchv1.JobCondition) []models.JobConditi
 }
 
 func (jc *JobCollector) collectJobResourceMetrics(ctx context.Context, job *batchv1.Job) models.ResourceMetrics {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"job":        job.Name,
+				"namespace":  job.Namespace,
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic while collecting job resource metrics")
+		}
+	}()
+
+	if job == nil {
+		logrus.Error("Received nil job in collectJobResourceMetrics")
+		return models.ResourceMetrics{}
+	}
+
 	selector := metav1.LabelSelector{MatchLabels: job.Spec.Selector.MatchLabels}
 	labelSelector, err := metav1.LabelSelectorAsSelector(&selector)
 	if err != nil {
-		logrus.Errorf("Failed to create selector for job %s/%s: %v", job.Namespace, job.Name, err)
+		logrus.WithFields(logrus.Fields{
+			"job":       job.Name,
+			"namespace": job.Namespace,
+			"error":     err,
+		}).Error("Failed to create selector for job")
 		return models.ResourceMetrics{}
 	}
 
@@ -168,7 +246,11 @@ func (jc *JobCollector) collectJobResourceMetrics(ctx context.Context, job *batc
 		LabelSelector: labelSelector.String(),
 	})
 	if err != nil {
-		logrus.Errorf("Failed to list pods for job %s/%s: %v", job.Namespace, job.Name, err)
+		logrus.WithFields(logrus.Fields{
+			"job":       job.Name,
+			"namespace": job.Namespace,
+			"error":     err,
+		}).Error("Failed to list pods for job")
 		return models.ResourceMetrics{}
 	}
 
@@ -182,6 +264,14 @@ func (jc *JobCollector) collectJobResourceMetrics(ctx context.Context, job *batc
 			}
 		}
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"job":       job.Name,
+		"namespace": job.Namespace,
+		"cpu":       metrics.CPU,
+		"memory":    metrics.Memory,
+		"storage":   metrics.Storage,
+	}).Debug("Collected resource metrics for job")
 
 	return metrics
 }

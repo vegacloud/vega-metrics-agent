@@ -13,7 +13,7 @@ package collectors
 
 import (
 	"context"
-	"fmt"
+	"runtime/debug"
 
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
@@ -33,55 +33,91 @@ type ReplicationControllerCollector struct {
 // NewReplicationControllerCollector creates a new ReplicationControllerCollector.
 func NewReplicationControllerCollector(clientset *kubernetes.Clientset,
 	cfg *config.Config) *ReplicationControllerCollector {
-	// logrus.Debug("Starting ReplicationControllerCollector")
-	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
-	// 		TLSClientConfig: &tls.Config{
-	// 			InsecureSkipVerify: cfg.VegaInsecure,
-	// 		},
-	// 	}
-	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
-	// 		string(token),
-	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
-	// 	)
-	// }
-	logrus.Debug("ReplicationControllerCollector created successfully")
-	return &ReplicationControllerCollector{
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in NewReplicationControllerCollector")
+		}
+	}()
+
+	logrus.Debug("Creating new ReplicationControllerCollector")
+	collector := &ReplicationControllerCollector{
 		clientset: clientset,
 		config:    cfg,
 	}
+	logrus.Debug("ReplicationControllerCollector created successfully")
+	return collector
 }
 
 // CollectMetrics collects metrics from Kubernetes replication controllers.
 func (rcc *ReplicationControllerCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in ReplicationControllerCollector.CollectMetrics")
+		}
+	}()
+
 	metrics, err := rcc.CollectReplicationControllerMetrics(ctx)
 	if err != nil {
-		return nil, err
+		logrus.WithError(err).Error("Failed to collect replication controller metrics")
+		return []models.ReplicationControllerMetrics{}, nil
 	}
-	logrus.Debug("Successfully collected replication controller metrics")
+
+	logrus.WithField("count", len(metrics)).Debug("Successfully collected replication controller metrics")
 	return metrics, nil
 }
 
 // CollectReplicationControllerMetrics collects metrics from Kubernetes replication controllers.
 func (rcc *ReplicationControllerCollector) CollectReplicationControllerMetrics(
 	ctx context.Context) ([]models.ReplicationControllerMetrics, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in CollectReplicationControllerMetrics")
+		}
+	}()
+
 	rcs, err := rcc.clientset.CoreV1().ReplicationControllers("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list replication controllers: %w", err)
+		logrus.WithError(err).Error("Failed to list replication controllers")
+		return []models.ReplicationControllerMetrics{}, nil
 	}
-	logrus.Debugf("Successfully listed %d replication controllers", len(rcs.Items))
 
+	logrus.WithField("count", len(rcs.Items)).Debug("Successfully listed replication controllers")
 	metrics := make([]models.ReplicationControllerMetrics, 0, len(rcs.Items))
+
 	for _, rc := range rcs.Items {
+		logrus.WithFields(logrus.Fields{
+			"rc":        rc.Name,
+			"namespace": rc.Namespace,
+		}).Debug("Processing replication controller")
+
 		metrics = append(metrics, rcc.parseReplicationControllerMetrics(rc))
 	}
 
-	logrus.Debugf("Collected metrics for %d replication controllers", len(metrics))
 	return metrics, nil
 }
 
 func (rcc *ReplicationControllerCollector) parseReplicationControllerMetrics(
 	rc v1.ReplicationController) models.ReplicationControllerMetrics {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"rc":         rc.Name,
+				"namespace":  rc.Namespace,
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in parseReplicationControllerMetrics")
+		}
+	}()
+
 	if rc.Labels == nil {
 		rc.Labels = make(map[string]string)
 	}
@@ -91,6 +127,15 @@ func (rcc *ReplicationControllerCollector) parseReplicationControllerMetrics(
 
 	conditions := make([]models.RCCondition, 0, len(rc.Status.Conditions))
 	for _, condition := range rc.Status.Conditions {
+		if condition.LastTransitionTime.IsZero() {
+			logrus.WithFields(logrus.Fields{
+				"rc":        rc.Name,
+				"namespace": rc.Namespace,
+				"condition": condition.Type,
+			}).Debug("Skipping condition with zero transition time")
+			continue
+		}
+
 		conditions = append(conditions, models.RCCondition{
 			Type:               string(condition.Type),
 			Status:             string(condition.Status),
@@ -114,6 +159,14 @@ func (rcc *ReplicationControllerCollector) parseReplicationControllerMetrics(
 		CreationTimestamp:    &rc.CreationTimestamp.Time,
 	}
 
-	logrus.Debugf("Parsed replication controller metrics for %s/%s", rc.Namespace, rc.Name)
+	logrus.WithFields(logrus.Fields{
+		"rc":         rc.Name,
+		"namespace":  rc.Namespace,
+		"replicas":   metrics.Replicas,
+		"ready":      metrics.ReadyReplicas,
+		"available":  metrics.AvailableReplicas,
+		"conditions": len(metrics.Conditions),
+	}).Debug("Collected metrics for replication controller")
+
 	return metrics
 }

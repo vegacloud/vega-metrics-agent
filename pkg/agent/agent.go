@@ -69,13 +69,14 @@ func NewMetricsAgent(cfg *config.Config,
 
 	// Create collectors with the properly configured clientset
 	collectorsMap := make(map[string]collectors.Collector)
-	clusterCollector := collectors.NewClusterCollector(clientConfig.Clientset, cfg)
-	collectorsMap["cluster"] = clusterCollector
+	collectorsMap["cluster"] = collectors.NewClusterCollector(clientConfig.Clientset, cfg)
+	collectorsMap["namespace"] = collectors.NewNamespaceCollector(clientConfig.Clientset, cfg)
 	collectorsMap["node"] = collectors.NewNodeCollector(clientConfig.Clientset, cfg)
 	collectorsMap["pod"] = collectors.NewPodCollector(clientConfig.Clientset, cfg)
 	collectorsMap["pv"] = collectors.NewPersistentVolumeCollector(clientConfig.Clientset, cfg)
-	collectorsMap["namespace"] = collectors.NewNamespaceCollector(clientConfig.Clientset, cfg)
+	collectorsMap["pvc"] = collectors.NewPersistentVolumeClaimCollector(clientConfig.Clientset, cfg)
 	collectorsMap["workload"] = collectors.NewWorkloadCollector(clientConfig.Clientset, cfg)
+	collectorsMap["daemonset"] = collectors.NewDaemonSetCollector(clientConfig.Clientset, cfg)
 	collectorsMap["network"] = collectors.NewNetworkingCollector(clientConfig.Clientset, cfg)
 	collectorsMap["job"] = collectors.NewJobCollector(clientConfig.Clientset, cfg)
 	collectorsMap["cronjob"] = collectors.NewCronJobCollector(clientConfig.Clientset, cfg)
@@ -188,16 +189,6 @@ func (ma *MetricsAgent) collectAndUploadMetrics(ctx context.Context) error {
 			// Acquire a slot in the semaphore
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }() // Release the slot when done
-
-			// Recover from panic if any collector panics
-			defer func() {
-				if r := recover(); r != nil {
-					ma.logger.WithField("collector", name).Errorf("Collector panicked: %v", r)
-					mu.Lock()
-					combinedErrors = errors.Join(combinedErrors, fmt.Errorf("collector %s panicked: %v", name, r))
-					mu.Unlock()
-				}
-			}()
 
 			ma.logger.WithField("collector", name).Info("Collecting metrics")
 			collectedMetrics, err := collector.CollectMetrics(ctx)

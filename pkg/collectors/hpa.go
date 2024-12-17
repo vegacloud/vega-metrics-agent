@@ -14,7 +14,7 @@ package collectors
 
 import (
 	"context"
-	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -34,92 +34,145 @@ type HPACollector struct {
 
 // NewHPACollector creates a new HPACollector.
 func NewHPACollector(clientset *kubernetes.Clientset, cfg *config.Config) *HPACollector {
-	// logrus.Debug("Starting HPACollector")
-	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
-	// 		TLSClientConfig: &tls.Config{
-	// 			InsecureSkipVerify: cfg.VegaInsecure,
-	// 		},
-	// 	}
-	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
-	// 		string(token),
-	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
-	// 	)
-	// }
-	logrus.Debug("HPACollector created successfully")
-	return &HPACollector{
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in NewHPACollector")
+		}
+	}()
+
+	logrus.Debug("Starting HPACollector")
+	collector := &HPACollector{
 		clientset: clientset,
 		config:    cfg,
 	}
-
+	logrus.Debug("HPACollector created successfully")
+	return collector
 }
 
 // CollectMetrics collects metrics from Kubernetes horizontal pod autoscalers.
 func (hc *HPACollector) CollectMetrics(ctx context.Context) (interface{}, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in HPACollector.CollectMetrics")
+		}
+	}()
+
 	metrics, err := hc.CollectHPAMetrics(ctx)
 	if err != nil {
-		return nil, err
+		logrus.WithFields(logrus.Fields{
+			"error": err,
+		}).Error("Failed to collect HPA metrics")
+		return []models.HPAMetrics{}, nil
 	}
-	logrus.Debug("Successfully collected HPA metrics")
+
+	logrus.WithField("count", len(metrics)).Debug("Successfully collected HPA metrics")
 	return metrics, nil
 }
 
 // CollectHPAMetrics collects metrics from Kubernetes horizontal pod autoscalers.
 func (hc *HPACollector) CollectHPAMetrics(ctx context.Context) ([]models.HPAMetrics, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in HPACollector.CollectHPAMetrics")
+		}
+	}()
+
 	hpas, err := hc.clientset.AutoscalingV1().HorizontalPodAutoscalers("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list HPAs: %w", err)
+		logrus.WithFields(logrus.Fields{
+			"error": err,
+		}).Error("Failed to list HPAs")
+		return []models.HPAMetrics{}, nil
 	}
-	logrus.Debugf("Successfully listed %d HPAs", len(hpas.Items))
 
 	metrics := make([]models.HPAMetrics, 0, len(hpas.Items))
 	for _, hpa := range hpas.Items {
-		metrics = append(metrics, hc.parseHPAMetrics(hpa))
+		logrus.WithFields(logrus.Fields{
+			"hpa":       hpa.Name,
+			"namespace": hpa.Namespace,
+		}).Debug("Processing HPA")
+
+		metric := hc.parseHPAMetrics(hpa)
+		metrics = append(metrics, metric)
 	}
 
-	logrus.Debugf("Collected metrics for %d HPAs", len(metrics))
+	logrus.WithField("count", len(metrics)).Debug("Collected metrics for HPAs")
 	return metrics, nil
 }
 
 func (hc *HPACollector) parseHPAMetrics(hpa autoscalingv1.HorizontalPodAutoscaler) models.HPAMetrics {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"hpa":        hpa.Name,
+				"namespace":  hpa.Namespace,
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic while parsing HPA metrics")
+		}
+	}()
+
+	// Initialize empty maps if nil
+	if hpa.Labels == nil {
+		hpa.Labels = make(map[string]string)
+	}
+	if hpa.Annotations == nil {
+		hpa.Annotations = make(map[string]string)
+	}
+
+	// Safely handle ScaleTargetRef
+	scaleTargetRef := models.ScaleTargetRef{
+		Kind:       hpa.Spec.ScaleTargetRef.Kind,
+		Name:       hpa.Spec.ScaleTargetRef.Name,
+		APIVersion: hpa.Spec.ScaleTargetRef.APIVersion,
+	}
+
+	// Safely handle LastScaleTime
+	var lastScaleTime *time.Time
+	if hpa.Status.LastScaleTime != nil {
+		t := hpa.Status.LastScaleTime.Time
+		lastScaleTime = &t
+	}
+
 	metrics := models.HPAMetrics{
-		Name:      hpa.Name,
-		Namespace: hpa.Namespace,
-		ScaleTargetRef: models.ScaleTargetRef{
-			Kind:       hpa.Spec.ScaleTargetRef.Kind,
-			Name:       hpa.Spec.ScaleTargetRef.Name,
-			APIVersion: hpa.Spec.ScaleTargetRef.APIVersion,
-		},
+		Name:                            hpa.Name,
+		Namespace:                       hpa.Namespace,
+		ScaleTargetRef:                  scaleTargetRef,
 		MinReplicas:                     hpa.Spec.MinReplicas,
 		MaxReplicas:                     hpa.Spec.MaxReplicas,
 		CurrentReplicas:                 hpa.Status.CurrentReplicas,
 		DesiredReplicas:                 hpa.Status.DesiredReplicas,
 		CurrentCPUUtilizationPercentage: hpa.Status.CurrentCPUUtilizationPercentage,
 		TargetCPUUtilizationPercentage:  hpa.Spec.TargetCPUUtilizationPercentage,
-		LastScaleTime: func() *time.Time {
-			if hpa.Status.LastScaleTime != nil {
-				t := hpa.Status.LastScaleTime.Time
-				return &t
-			}
-			return nil
-		}(),
-		ObservedGeneration: hpa.Status.ObservedGeneration,
-		Labels:             hpa.Labels,
-		Annotations:        hpa.Annotations,
+		LastScaleTime:                   lastScaleTime,
+		ObservedGeneration:              hpa.Status.ObservedGeneration,
+		Labels:                          hpa.Labels,
+		Annotations:                     hpa.Annotations,
 		Status: models.HPAStatus{
 			CurrentReplicas:                 hpa.Status.CurrentReplicas,
 			DesiredReplicas:                 hpa.Status.DesiredReplicas,
 			CurrentCPUUtilizationPercentage: hpa.Status.CurrentCPUUtilizationPercentage,
-			LastScaleTime: func() *time.Time {
-				if hpa.Status.LastScaleTime != nil {
-					t := hpa.Status.LastScaleTime.Time
-					return &t
-				}
-				return nil
-			}(),
+			LastScaleTime:                   lastScaleTime,
 		},
 	}
 
-	logrus.Debugf("Parsed HPA metrics for HPA %s/%s", hpa.Namespace, hpa.Name)
+	logrus.WithFields(logrus.Fields{
+		"hpa":             hpa.Name,
+		"namespace":       hpa.Namespace,
+		"currentReplicas": hpa.Status.CurrentReplicas,
+		"desiredReplicas": hpa.Status.DesiredReplicas,
+		"targetCPU":       hpa.Spec.TargetCPUUtilizationPercentage,
+		"currentCPU":      hpa.Status.CurrentCPUUtilizationPercentage,
+	}).Debug("Parsed HPA metrics")
+
 	return metrics
 }

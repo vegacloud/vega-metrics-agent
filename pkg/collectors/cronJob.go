@@ -37,23 +37,11 @@ type CronJobCollector struct {
 
 // NewCronJobCollector creates a new CronJobCollector.
 func NewCronJobCollector(clientset *kubernetes.Clientset, cfg *config.Config) *CronJobCollector {
-	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-	// 	logrus.Debug("CronJobCollector initialized successfully")
-	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
-	// 		TLSClientConfig: &tls.Config{
-	// 			InsecureSkipVerify: cfg.VegaInsecure,
-	// 		},
-	// 	}
-	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
-	// 		string(token),
-	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
-	// 	)
-	// }
 	logrus.Debug("CronJobCollector initialized successfully")
 	return &CronJobCollector{
 		clientset: clientset,
 		config:    cfg,
-		parser:    cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
+		parser:    cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
 	}
 }
 

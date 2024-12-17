@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"runtime/debug"
 
 	"github.com/sirupsen/logrus"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
@@ -35,82 +36,129 @@ type NetworkingCollector struct {
 
 // NewNetworkingCollector creates a new NetworkingCollector.
 func NewNetworkingCollector(clientset *kubernetes.Clientset, cfg *config.Config) *NetworkingCollector {
-	// logrus.Debug("Starting NetworkingCollector")
-	// if token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
-	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{
-	// 		TLSClientConfig: &tls.Config{
-	// 			InsecureSkipVerify: cfg.VegaInsecure,
-	// 		},
-	// 	}
-	// 	clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
-	// 		string(token),
-	// 		clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
-	// 	)
-	// }
-	logrus.Debug("NetworkingCollector created successfully")
-	return &NetworkingCollector{
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in NewNetworkingCollector")
+		}
+	}()
+
+	logrus.Debug("Starting NetworkingCollector")
+	collector := &NetworkingCollector{
 		clientset: clientset,
 		config:    cfg,
 	}
-
+	logrus.Debug("NetworkingCollector created successfully")
+	return collector
 }
 
 // CollectMetrics collects metrics from Kubernetes networking resources.
 func (nc *NetworkingCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in NetworkingCollector.CollectMetrics")
+		}
+	}()
+
 	metrics, err := nc.CollectNetworkingMetrics(ctx)
 	if err != nil {
-		return nil, err
+		logrus.WithError(err).Error("Failed to collect networking metrics")
+		return &models.NetworkingMetrics{}, nil
 	}
-	logrus.Debug("Successfully collected networking metrics")
 	return metrics, nil
 }
 
 // CollectNetworkingMetrics collects metrics from Kubernetes networking resources.
 func (nc *NetworkingCollector) CollectNetworkingMetrics(ctx context.Context) (*models.NetworkingMetrics, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in CollectNetworkingMetrics")
+		}
+	}()
+
 	metrics := &models.NetworkingMetrics{}
 
-	var err error
-	metrics.Services, err = nc.collectServiceMetrics(ctx)
+	services, err := nc.collectServiceMetrics(ctx)
 	if err != nil {
-		logrus.Warnf("Failed to collect service metrics: %v", err)
+		logrus.WithError(err).Error("Failed to collect service metrics")
 	} else {
-		logrus.Debug("Successfully collected service metrics")
+		metrics.Services = services
 	}
 
-	metrics.Ingresses, err = nc.collectIngressMetrics(ctx)
+	ingresses, err := nc.collectIngressMetrics(ctx)
 	if err != nil {
-		logrus.Warnf("Failed to collect ingress metrics: %v", err)
+		logrus.WithError(err).Error("Failed to collect ingress metrics")
 	} else {
-		logrus.Debug("Successfully collected ingress metrics")
+		metrics.Ingresses = ingresses
 	}
 
-	metrics.NetworkPolicies, err = nc.collectNetworkPolicyMetrics(ctx)
+	networkPolicies, err := nc.collectNetworkPolicyMetrics(ctx)
 	if err != nil {
-		logrus.Warnf("Failed to collect network policy metrics: %v", err)
+		logrus.WithError(err).Error("Failed to collect network policy metrics")
 	} else {
-		logrus.Debug("Successfully collected network policy metrics")
+		metrics.NetworkPolicies = networkPolicies
 	}
 
 	return metrics, nil
 }
 
 func (nc *NetworkingCollector) collectServiceMetrics(ctx context.Context) ([]models.ServiceMetrics, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in collectServiceMetrics")
+		}
+	}()
+
 	services, err := nc.clientset.CoreV1().Services("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list services: %w", err)
+		logrus.WithError(err).Error("Failed to list services")
+		return []models.ServiceMetrics{}, nil
 	}
-	logrus.Debugf("Successfully listed %d services", len(services.Items))
 
 	metrics := make([]models.ServiceMetrics, 0, len(services.Items))
-
 	for _, svc := range services.Items {
+		logrus.WithFields(logrus.Fields{
+			"service":   svc.Name,
+			"namespace": svc.Namespace,
+		}).Debug("Processing service")
+
 		metrics = append(metrics, nc.parseServiceMetrics(svc))
 	}
 
+	logrus.WithField("count", len(metrics)).Debug("Collected service metrics")
 	return metrics, nil
 }
 
 func (nc *NetworkingCollector) parseServiceMetrics(svc corev1.Service) models.ServiceMetrics {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"service":    svc.Name,
+				"namespace":  svc.Namespace,
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in parseServiceMetrics")
+		}
+	}()
+
+	if svc.Labels == nil {
+		svc.Labels = make(map[string]string)
+	}
+	if svc.Annotations == nil {
+		svc.Annotations = make(map[string]string)
+	}
+
 	metrics := models.ServiceMetrics{
 		Name:                  svc.Name,
 		Namespace:             svc.Namespace,
@@ -123,23 +171,24 @@ func (nc *NetworkingCollector) parseServiceMetrics(svc corev1.Service) models.Se
 		ExternalTrafficPolicy: string(svc.Spec.ExternalTrafficPolicy),
 		HealthCheckNodePort:   svc.Spec.HealthCheckNodePort,
 		IPFamilies:            make([]string, 0),
-		IPFamilyPolicy: func() string {
-			if svc.Spec.IPFamilyPolicy != nil {
-				return string(*svc.Spec.IPFamilyPolicy)
-			}
-			return ""
-		}(),
 	}
 
+	// Safely handle IPFamilyPolicy
+	if svc.Spec.IPFamilyPolicy != nil {
+		metrics.IPFamilyPolicy = string(*svc.Spec.IPFamilyPolicy)
+	}
+
+	// Safely handle IPFamilies
 	for _, family := range svc.Spec.IPFamilies {
 		metrics.IPFamilies = append(metrics.IPFamilies, string(family))
 	}
 
+	// Safely handle LoadBalancerIP
 	if svc.Spec.LoadBalancerIP != "" {
 		metrics.LoadBalancerIP = svc.Spec.LoadBalancerIP
 	}
 
-	// Parse status
+	// Parse status safely
 	metrics.Status.LoadBalancer = models.LoadBalancerStatus{
 		Ingress: make([]models.LoadBalancerIngress, len(svc.Status.LoadBalancer.Ingress)),
 	}
@@ -151,8 +200,17 @@ func (nc *NetworkingCollector) parseServiceMetrics(svc corev1.Service) models.Se
 		}
 	}
 
-	// Parse conditions
+	// Parse conditions safely
 	for _, cond := range svc.Status.Conditions {
+		if cond.LastTransitionTime.IsZero() {
+			logrus.WithFields(logrus.Fields{
+				"service":   svc.Name,
+				"namespace": svc.Namespace,
+				"condition": cond.Type,
+			}).Debug("Skipping condition with zero transition time")
+			continue
+		}
+
 		metrics.Status.Conditions = append(metrics.Status.Conditions, models.ServiceCondition{
 			Type:               string(cond.Type),
 			Status:             string(cond.Status),
@@ -162,6 +220,7 @@ func (nc *NetworkingCollector) parseServiceMetrics(svc corev1.Service) models.Se
 		})
 	}
 
+	// Parse ports safely
 	for _, port := range svc.Spec.Ports {
 		metrics.Ports = append(metrics.Ports, models.ServicePort{
 			Name:       port.Name,
@@ -174,7 +233,13 @@ func (nc *NetworkingCollector) parseServiceMetrics(svc corev1.Service) models.Se
 
 	metrics.Selector = svc.Spec.Selector
 
-	logrus.Debugf("Parsed service metrics for service %s/%s", svc.Namespace, svc.Name)
+	logrus.WithFields(logrus.Fields{
+		"service":   svc.Name,
+		"namespace": svc.Namespace,
+		"type":      metrics.Type,
+		"ports":     len(metrics.Ports),
+	}).Debug("Parsed service metrics")
+
 	return metrics
 }
 
