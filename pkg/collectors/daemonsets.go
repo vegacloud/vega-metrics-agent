@@ -8,11 +8,13 @@
 // by the Apache License, Version 2.0, included in the file
 // licenses/APL.txt.
 // File: pkg/collectors/daemonsets.go
+
+// Package collectors hosts the collection functions
 package collectors
 
 import (
 	"context"
-	"fmt"
+	"runtime/debug"
 
 	"github.com/sirupsen/logrus"
 	appsv1 "k8s.io/api/apps/v1"
@@ -31,6 +33,17 @@ type DaemonSetCollector struct {
 
 // NewDaemonSetCollector creates a new DaemonSetCollector instance
 func NewDaemonSetCollector(clientset *kubernetes.Clientset, cfg *config.Config) *DaemonSetCollector {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in NewDaemonSetCollector")
+			return
+		}
+	}()
+
+	logrus.Debug("Starting DaemonSetCollector")
 	collector := &DaemonSetCollector{
 		clientset: clientset,
 		config:    cfg,
@@ -40,46 +53,112 @@ func NewDaemonSetCollector(clientset *kubernetes.Clientset, cfg *config.Config) 
 }
 
 // CollectMetrics collects metrics for daemon sets
-func (dsc *DaemonSetCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
-	metrics, err := dsc.CollectDaemonSetMetrics(ctx)
+func (dc *DaemonSetCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in DaemonSetCollector.CollectMetrics")
+		}
+	}()
+
+	daemonsets, err := dc.clientset.AppsV1().DaemonSets("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, err
+		logrus.WithFields(logrus.Fields{
+			"error": err,
+		}).Error("Failed to list daemonsets")
+		return []models.DaemonSetMetrics{}, nil
 	}
-	logrus.Debug("Successfully collected daemon set metrics")
+
+	metrics := make([]models.DaemonSetMetrics, 0, len(daemonsets.Items))
+	for _, ds := range daemonsets.Items {
+		logrus.WithFields(logrus.Fields{
+			"daemonset": ds.Name,
+			"namespace": ds.Namespace,
+		}).Debug("Processing daemonset")
+
+		metric := dc.convertDaemonSetToMetrics(&ds)
+		metrics = append(metrics, metric)
+	}
+
+	logrus.WithField("count", len(metrics)).Debug("Collected daemonset metrics")
 	return metrics, nil
 }
 
-// CollectDaemonSetMetrics collects metrics for all daemon sets in the cluster
-func (dsc *DaemonSetCollector) CollectDaemonSetMetrics(ctx context.Context) ([]models.DaemonSetMetrics, error) {
-	daemonSets, err := dsc.clientset.AppsV1().DaemonSets("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list daemon sets: %w", err)
+// convertDaemonSetToMetrics converts a Kubernetes DaemonSet to metrics
+func (dc *DaemonSetCollector) convertDaemonSetToMetrics(ds *appsv1.DaemonSet) models.DaemonSetMetrics {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"daemonset":  ds.Name,
+				"namespace":  ds.Namespace,
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic while converting daemonset to metrics")
+		}
+	}()
+
+	if ds == nil {
+		logrus.Error("Received nil daemonset")
+		return models.DaemonSetMetrics{}
 	}
-	logrus.Debugf("Successfully listed %d daemon sets", len(daemonSets.Items))
 
-	metrics := make([]models.DaemonSetMetrics, 0, len(daemonSets.Items))
-
-	for _, ds := range daemonSets.Items {
-		metrics = append(metrics, dsc.parseDaemonSetMetrics(ds))
-	}
-
-	logrus.Debugf("Collected metrics for %d daemon sets", len(metrics))
-	return metrics, nil
-}
-
-// parseDaemonSetMetrics parses metrics for a single daemon set
-func (dsc *DaemonSetCollector) parseDaemonSetMetrics(ds appsv1.DaemonSet) models.DaemonSetMetrics {
+	// Initialize empty maps if nil
 	if ds.Labels == nil {
 		ds.Labels = make(map[string]string)
 	}
-	return models.DaemonSetMetrics{
+	if ds.Annotations == nil {
+		ds.Annotations = make(map[string]string)
+	}
+
+	conditions := make([]models.DaemonSetCondition, 0, len(ds.Status.Conditions))
+	for _, condition := range ds.Status.Conditions {
+		if condition.LastTransitionTime.IsZero() {
+			logrus.WithFields(logrus.Fields{
+				"daemonset": ds.Name,
+				"namespace": ds.Namespace,
+				"condition": condition.Type,
+			}).Debug("Skipping condition with zero transition time")
+			continue
+		}
+
+		conditions = append(conditions, models.DaemonSetCondition{
+			Type:               string(condition.Type),
+			Status:             string(condition.Status),
+			LastTransitionTime: &condition.LastTransitionTime.Time,
+			Reason:             condition.Reason,
+			Message:            condition.Message,
+		})
+	}
+
+	metrics := models.DaemonSetMetrics{
 		Name:                   ds.Name,
 		Namespace:              ds.Namespace,
 		DesiredNumberScheduled: ds.Status.DesiredNumberScheduled,
 		CurrentNumberScheduled: ds.Status.CurrentNumberScheduled,
+
 		NumberReady:            ds.Status.NumberReady,
 		UpdatedNumberScheduled: ds.Status.UpdatedNumberScheduled,
 		NumberAvailable:        ds.Status.NumberAvailable,
+		NumberUnavailable:      ds.Status.NumberUnavailable,
+		NumberMisscheduled:     ds.Status.NumberMisscheduled,
 		Labels:                 ds.Labels,
+		Annotations:            ds.Annotations,
+		CreationTimestamp:      &ds.CreationTimestamp.Time,
+		CollisionCount:         ds.Status.CollisionCount,
+		Status: models.DaemonSetStatus{
+			ObservedGeneration: ds.Status.ObservedGeneration,
+		},
+		Conditions: conditions,
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"daemonset": ds.Name,
+		"namespace": ds.Namespace,
+		"ready":     ds.Status.NumberReady,
+		"desired":   ds.Status.DesiredNumberScheduled,
+	}).Debug("Converted daemonset to metrics")
+
+	return metrics
 }

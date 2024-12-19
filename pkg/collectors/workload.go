@@ -8,11 +8,15 @@
 // by the Apache License, Version 2.0, included in the file
 // licenses/APL.txt.
 // File: pkg/collectors/workload.go
+
+// Package collectors hosts the collection functions
 package collectors
 
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	appsv1 "k8s.io/api/apps/v1"
@@ -22,88 +26,178 @@ import (
 
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/models"
+	v1 "k8s.io/api/core/v1"
 )
 
+// WorkloadCollector collects metrics from Kubernetes workloads.
 type WorkloadCollector struct {
 	clientset *kubernetes.Clientset
 	config    *config.Config
 }
 
+// NewWorkloadCollector creates a new WorkloadCollector.
 func NewWorkloadCollector(clientset *kubernetes.Clientset, cfg *config.Config) *WorkloadCollector {
-	return &WorkloadCollector{
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in NewWorkloadCollector")
+		}
+	}()
+
+	logrus.Debug("Creating new WorkloadCollector")
+	collector := &WorkloadCollector{
 		clientset: clientset,
 		config:    cfg,
 	}
+	logrus.Debug("WorkloadCollector created successfully")
+	return collector
 }
 
+// CollectMetrics collects metrics from Kubernetes workloads.
 func (wc *WorkloadCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
-	return wc.CollectWorkloadMetrics(ctx)
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in WorkloadCollector.CollectMetrics")
+		}
+	}()
+
+	metrics, err := wc.CollectWorkloadMetrics(ctx)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to collect workload metrics")
+		return &models.WorkloadMetrics{}, nil
+	}
+	return metrics, nil
 }
 
+// CollectWorkloadMetrics collects metrics from Kubernetes workloads.
 func (wc *WorkloadCollector) CollectWorkloadMetrics(ctx context.Context) (*models.WorkloadMetrics, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in CollectWorkloadMetrics")
+		}
+	}()
+
 	metrics := &models.WorkloadMetrics{}
 
-	var err error
-	metrics.Deployments, err = wc.collectDeploymentMetrics(ctx)
+	// Collect deployment metrics
+	deployments, err := wc.collectDeploymentMetrics(ctx)
 	if err != nil {
-		logrus.Warnf("Failed to collect deployment metrics: %v", err)
+		logrus.WithError(err).Warn("Failed to collect deployment metrics")
 	} else {
-		logrus.Debug("Successfully collected deployment metrics")
+		metrics.Deployments = deployments
+		logrus.WithField("count", len(deployments)).Debug("Successfully collected deployment metrics")
 	}
 
-	metrics.StatefulSets, err = wc.collectStatefulSetMetrics(ctx)
+	// Collect statefulset metrics
+	statefulSets, err := wc.collectStatefulSetMetrics(ctx)
 	if err != nil {
-		logrus.Warnf("Failed to collect statefulset metrics: %v", err)
+		logrus.WithError(err).Warn("Failed to collect statefulset metrics")
 	} else {
-		logrus.Debug("Successfully collected statefulset metrics")
+		metrics.StatefulSets = statefulSets
+		logrus.WithField("count", len(statefulSets)).Debug("Successfully collected statefulset metrics")
 	}
 
-	metrics.DaemonSets, err = wc.collectDaemonSetMetrics(ctx)
+	// Collect daemonset metrics
+	daemonSets, err := wc.collectDaemonSetMetrics(ctx)
 	if err != nil {
-		logrus.Warnf("Failed to collect daemonset metrics: %v", err)
+		logrus.WithError(err).Warn("Failed to collect daemonset metrics")
 	} else {
-		logrus.Debug("Successfully collected daemonset metrics")
+		metrics.DaemonSets = daemonSets
+		logrus.WithField("count", len(daemonSets)).Debug("Successfully collected daemonset metrics")
 	}
 
-	metrics.Jobs, err = wc.collectJobMetrics(ctx)
+	// Collect job metrics
+	jobs, err := wc.collectJobMetrics(ctx)
 	if err != nil {
-		logrus.Warnf("Failed to collect job metrics: %v", err)
+		logrus.WithError(err).Warn("Failed to collect job metrics")
 	} else {
-		logrus.Debug("Successfully collected job metrics")
+		metrics.Jobs = jobs
+		logrus.WithField("count", len(jobs)).Debug("Successfully collected job metrics")
 	}
 
 	return metrics, nil
 }
 
+// collectDeploymentMetrics collects metrics from Kubernetes deployments.
 func (wc *WorkloadCollector) collectDeploymentMetrics(ctx context.Context) ([]models.DeploymentMetrics, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in collectDeploymentMetrics")
+		}
+	}()
+
 	deployments, err := wc.clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list deployments: %w", err)
+		return nil, err
 	}
 
 	metrics := make([]models.DeploymentMetrics, 0, len(deployments.Items))
-
 	for _, d := range deployments.Items {
+		logrus.WithFields(logrus.Fields{
+			"deployment": d.Name,
+			"namespace":  d.Namespace,
+		}).Debug("Processing deployment")
 		metrics = append(metrics, wc.parseDeploymentMetrics(d))
 	}
 
-	logrus.Debugf("Collected metrics for %d deployments", len(metrics))
 	return metrics, nil
 }
 
 func (wc *WorkloadCollector) parseDeploymentMetrics(d appsv1.Deployment) models.DeploymentMetrics {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"deployment": d.Name,
+				"namespace":  d.Namespace,
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in parseDeploymentMetrics")
+		}
+	}()
+
 	if d.Labels == nil {
 		d.Labels = make(map[string]string)
 	}
-	return models.DeploymentMetrics{
-		Name:              d.Name,
-		Namespace:         d.Namespace,
-		Replicas:          *d.Spec.Replicas,
-		ReadyReplicas:     d.Status.ReadyReplicas,
-		UpdatedReplicas:   d.Status.UpdatedReplicas,
-		AvailableReplicas: d.Status.AvailableReplicas,
-		Labels:            d.Labels,
+
+	conditions := make([]string, 0)
+	for _, condition := range d.Status.Conditions {
+		conditions = append(conditions, string(condition.Type))
 	}
+
+	metrics := models.DeploymentMetrics{
+		Name:               d.Name,
+		Namespace:          d.Namespace,
+		Replicas:           *d.Spec.Replicas,
+		ReadyReplicas:      d.Status.ReadyReplicas,
+		UpdatedReplicas:    d.Status.UpdatedReplicas,
+		AvailableReplicas:  d.Status.AvailableReplicas,
+		Labels:             d.Labels,
+		CollisionCount:     d.Status.CollisionCount,
+		Conditions:         conditions,
+		Generation:         d.Generation,
+		ObservedGeneration: d.Status.ObservedGeneration,
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"deployment": d.Name,
+		"namespace":  d.Namespace,
+		"replicas":   metrics.Replicas,
+		"ready":      metrics.ReadyReplicas,
+		"available":  metrics.AvailableReplicas,
+	}).Debug("Collected metrics for deployment")
+
+	return metrics
 }
 
 func (wc *WorkloadCollector) collectStatefulSetMetrics(ctx context.Context) ([]models.StatefulSetMetrics, error) {
@@ -125,14 +219,25 @@ func (wc *WorkloadCollector) parseStatefulSetMetrics(s appsv1.StatefulSet) model
 	if s.Labels == nil {
 		s.Labels = make(map[string]string)
 	}
+
+	conditions := make([]string, 0)
+	for _, condition := range s.Status.Conditions {
+		conditions = append(conditions, string(condition.Type))
+	}
+
 	return models.StatefulSetMetrics{
-		Name:            s.Name,
-		Namespace:       s.Namespace,
-		Replicas:        *s.Spec.Replicas,
-		ReadyReplicas:   s.Status.ReadyReplicas,
-		CurrentReplicas: s.Status.CurrentReplicas,
-		UpdatedReplicas: s.Status.UpdatedReplicas,
-		Labels:          s.Labels,
+		Name:               s.Name,
+		Namespace:          s.Namespace,
+		Replicas:           *s.Spec.Replicas,
+		ReadyReplicas:      s.Status.ReadyReplicas,
+		CurrentReplicas:    s.Status.CurrentReplicas,
+		UpdatedReplicas:    s.Status.UpdatedReplicas,
+		AvailableReplicas:  s.Status.AvailableReplicas,
+		Labels:             s.Labels,
+		CollisionCount:     s.Status.CollisionCount,
+		Conditions:         conditions,
+		Generation:         s.Generation,
+		ObservedGeneration: s.Status.ObservedGeneration,
 	}
 }
 
@@ -155,6 +260,18 @@ func (wc *WorkloadCollector) parseDaemonSetMetrics(d appsv1.DaemonSet) models.Da
 	if d.Labels == nil {
 		d.Labels = make(map[string]string)
 	}
+
+	conditions := make([]models.DaemonSetCondition, 0)
+	for _, condition := range d.Status.Conditions {
+		conditions = append(conditions, models.DaemonSetCondition{
+			Type:               string(condition.Type),
+			Status:             string(condition.Status),
+			LastTransitionTime: &condition.LastTransitionTime.Time,
+			Reason:             condition.Reason,
+			Message:            condition.Message,
+		})
+	}
+
 	return models.DaemonSetMetrics{
 		Name:                   d.Name,
 		Namespace:              d.Namespace,
@@ -163,7 +280,12 @@ func (wc *WorkloadCollector) parseDaemonSetMetrics(d appsv1.DaemonSet) models.Da
 		NumberReady:            d.Status.NumberReady,
 		UpdatedNumberScheduled: d.Status.UpdatedNumberScheduled,
 		NumberAvailable:        d.Status.NumberAvailable,
+		NumberUnavailable:      d.Status.NumberUnavailable,
+		NumberMisscheduled:     d.Status.NumberMisscheduled,
 		Labels:                 d.Labels,
+		Generation:             d.Generation,
+		ObservedGeneration:     d.Status.ObservedGeneration,
+		Conditions:             conditions,
 	}
 }
 
@@ -186,33 +308,85 @@ func (wc *WorkloadCollector) parseJobMetrics(j batchv1.Job) models.JobMetrics {
 	if j.Labels == nil {
 		j.Labels = make(map[string]string)
 	}
+
+	conditions := make([]models.JobCondition, 0)
+	for _, condition := range j.Status.Conditions {
+		conditions = append(conditions, models.JobCondition{
+			Type:               string(condition.Type),
+			Status:             string(condition.Status),
+			LastProbeTime:      &condition.LastProbeTime.Time,
+			LastTransitionTime: &condition.LastTransitionTime.Time,
+			Reason:             condition.Reason,
+			Message:            condition.Message,
+		})
+	}
+
 	metrics := models.JobMetrics{
-		Name:      j.Name,
-		Namespace: j.Namespace,
-		Labels:    j.Labels,
-		Completions: func() *int32 {
-			if j.Spec.Completions != nil {
-				return j.Spec.Completions
-			}
-			return nil
-		}(),
-		Parallelism: func() *int32 {
-			if j.Spec.Parallelism != nil {
-				return j.Spec.Parallelism
-			}
-			return nil
-		}(),
-		Active:    j.Status.Active,
-		Succeeded: j.Status.Succeeded,
-		Failed:    j.Status.Failed,
+		Name:             j.Name,
+		Namespace:        j.Namespace,
+		Labels:           j.Labels,
+		Active:           j.Status.Active,
+		Succeeded:        j.Status.Succeeded,
+		Failed:           j.Status.Failed,
+		Status:           getJobStatus(j.Status),
+		CompletedIndexes: j.Status.CompletedIndexes,
+		Conditions:       conditions,
+		Generation:       j.Generation,
 	}
 
+	// Add existing time-related fields
 	if j.Status.StartTime != nil {
-		metrics.StartTime = j.Status.StartTime.Time
+		metrics.StartTime = &j.Status.StartTime.Time
+	}
+	if j.Status.CompletionTime != nil {
+		metrics.CompletionTime = &j.Status.CompletionTime.Time
+	}
+	if metrics.StartTime != nil {
+		endTime := time.Now()
+		if metrics.CompletionTime != nil {
+			endTime = *metrics.CompletionTime
+		}
+		duration := endTime.Sub(*metrics.StartTime)
+		metrics.Duration = &duration
 	}
 
-	if j.Status.CompletionTime != nil {
-		metrics.CompletionTime = j.Status.CompletionTime.Time
+	metrics.ResourceMetrics = wc.getJobResourceMetrics(j)
+	return metrics
+}
+
+// Helper function to get job status
+func getJobStatus(status batchv1.JobStatus) string {
+	switch {
+	case status.Succeeded > 0:
+		return "Succeeded"
+	case status.Failed > 0:
+		return "Failed"
+	case status.Active > 0:
+		return "Active"
+	default:
+		return "Pending"
+	}
+}
+
+// Helper function to get resource metrics for a job
+func (wc *WorkloadCollector) getJobResourceMetrics(job batchv1.Job) models.ResourceMetrics {
+	metrics := models.ResourceMetrics{}
+
+	if job.Spec.Template.Spec.Containers == nil {
+		return metrics
+	}
+
+	for _, container := range job.Spec.Template.Spec.Containers {
+		if container.Resources.Requests != nil {
+			metrics.CPU += container.Resources.Requests.Cpu().MilliValue()
+			metrics.Memory += container.Resources.Requests.Memory().Value()
+			if storage := container.Resources.Requests.Storage(); storage != nil {
+				metrics.Storage += storage.Value()
+			}
+			if ephemeral, ok := container.Resources.Requests[v1.ResourceEphemeralStorage]; ok {
+				metrics.EphemeralStorage += ephemeral.Value()
+			}
+		}
 	}
 
 	return metrics

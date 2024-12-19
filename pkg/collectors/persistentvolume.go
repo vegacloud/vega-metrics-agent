@@ -8,11 +8,14 @@
 // by the Apache License, Version 2.0, included in the file
 // licenses/APL.txt.
 // File: pkg/collectors/persistentvolume.go
+
+// Package collectors hosts the collection functions
 package collectors
 
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,12 +26,24 @@ import (
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/models"
 )
 
+// PersistentVolumeCollector collects metrics from Kubernetes persistent volumes.
 type PersistentVolumeCollector struct {
 	clientset *kubernetes.Clientset
 	config    *config.Config
 }
 
+// NewPersistentVolumeCollector creates a new PersistentVolumeCollector.
 func NewPersistentVolumeCollector(clientset *kubernetes.Clientset, cfg *config.Config) *PersistentVolumeCollector {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in NewPersistentVolumeCollector")
+		}
+	}()
+
+	logrus.Debug("Creating new PersistentVolumeCollector")
 	collector := &PersistentVolumeCollector{
 		clientset: clientset,
 		config:    cfg,
@@ -37,93 +52,124 @@ func NewPersistentVolumeCollector(clientset *kubernetes.Clientset, cfg *config.C
 	return collector
 }
 
+// CollectMetrics collects metrics from Kubernetes persistent volumes.
 func (pvc *PersistentVolumeCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
-	metrics, err := pvc.CollectPersistentVolumeMetrics(ctx)
-	if err != nil {
-		return nil, err
-	}
-	logrus.Debug("Successfully collected persistent volume metrics")
-	return metrics, nil
-}
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in PersistentVolumeCollector.CollectMetrics")
+		}
+	}()
 
-func (pvc *PersistentVolumeCollector) CollectPersistentVolumeMetrics(
-	ctx context.Context,
-) (*models.PersistentVolumeMetrics, error) {
 	pvs, err := pvc.clientset.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list persistent volumes: %w", err)
-	}
-	logrus.Debugf("Successfully listed %d persistent volumes", len(pvs.Items))
-
-	pvcs, err := pvc.clientset.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list persistent volume claims: %w", err)
-	}
-	logrus.Debugf("Successfully listed %d persistent volume claims", len(pvcs.Items))
-
-	metrics := &models.PersistentVolumeMetrics{
-		PVs:  pvc.collectPVMetrics(pvs.Items),
-		PVCs: pvc.collectPVCMetrics(pvcs.Items),
+		logrus.WithError(err).Error("Failed to list persistent volumes")
+		return []models.PVMetric{}, nil
 	}
 
-	logrus.Debug("Successfully calculated persistent volume metrics")
+	logrus.WithField("count", len(pvs.Items)).Debug("Successfully listed persistent volumes")
+	metrics := pvc.collectPVMetrics(pvs.Items)
+
+	logrus.WithField("count", len(metrics)).Debug("Successfully collected persistent volume metrics")
 	return metrics, nil
 }
 
+// collectPVMetrics collects metrics from Kubernetes persistent volumes.
 func (pvc *PersistentVolumeCollector) collectPVMetrics(pvs []v1.PersistentVolume) []models.PVMetric {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in collectPVMetrics")
+		}
+	}()
 
 	pvMetrics := make([]models.PVMetric, 0, len(pvs))
 
 	for _, pv := range pvs {
+		logrus.WithFields(logrus.Fields{
+			"pv": pv.Name,
+		}).Debug("Processing persistent volume")
+
 		if pv.Labels == nil {
 			pv.Labels = make(map[string]string)
 		}
-		metric := models.PVMetric{
-			Name:         pv.Name,
-			Capacity:     pv.Spec.Capacity.Storage().Value(),
-			Phase:        string(pv.Status.Phase),
-			StorageClass: pv.Spec.StorageClassName,
-			Labels:       pv.Labels,
+		if pv.Annotations == nil {
+			pv.Annotations = make(map[string]string)
 		}
 
+		// Safely collect access modes
+		accessModes := make([]string, 0)
+		for _, mode := range pv.Spec.AccessModes {
+			accessModes = append(accessModes, string(mode))
+		}
+
+		// Safely handle volume mode
+		var volumeMode string
+		if pv.Spec.VolumeMode != nil {
+			volumeMode = string(*pv.Spec.VolumeMode)
+		}
+
+		metric := models.PVMetric{
+			Name:          pv.Name,
+			Capacity:      pv.Spec.Capacity.Storage().Value(),
+			Phase:         string(pv.Status.Phase),
+			StorageClass:  pv.Spec.StorageClassName,
+			Labels:        pv.Labels,
+			AccessModes:   accessModes,
+			ReclaimPolicy: string(pv.Spec.PersistentVolumeReclaimPolicy),
+			VolumeMode:    volumeMode,
+			Status: models.PVStatus{
+				Phase:   string(pv.Status.Phase),
+				Message: pv.Status.Message,
+				Reason:  pv.Status.Reason,
+			},
+			MountOptions: pv.Spec.MountOptions,
+		}
+
+		// Safely get storage class details
+		if pv.Spec.StorageClassName != "" {
+			sc, err := pvc.clientset.StorageV1().StorageClasses().Get(
+				context.Background(),
+				pv.Spec.StorageClassName,
+				metav1.GetOptions{},
+			)
+			if err != nil {
+				logrus.WithFields(logrus.Fields{
+					"pv":           pv.Name,
+					"storageClass": pv.Spec.StorageClassName,
+					"error":        err,
+				}).Error("Failed to get storage class details")
+			} else if sc.VolumeBindingMode != nil {
+				metric.VolumeBindingMode = string(*sc.VolumeBindingMode)
+			}
+		}
+
+		// Safely handle claim reference
 		if pv.Spec.ClaimRef != nil {
 			metric.BoundPVC = fmt.Sprintf("%s/%s", pv.Spec.ClaimRef.Namespace, pv.Spec.ClaimRef.Name)
 		}
 
+		// Safely handle annotations
+		if ann := pv.Annotations; ann != nil {
+			if provisioner, ok := ann["pv.kubernetes.io/provisioned-by"]; ok {
+				metric.StorageProvisioner = provisioner
+			}
+		}
+
+		logrus.WithFields(logrus.Fields{
+			"pv":           pv.Name,
+			"phase":        metric.Phase,
+			"capacity":     metric.Capacity,
+			"storageClass": metric.StorageClass,
+			"boundPVC":     metric.BoundPVC,
+		}).Debug("Collected metrics for persistent volume")
+
 		pvMetrics = append(pvMetrics, metric)
 	}
 
-	logrus.Debugf("Collected metrics for %d persistent volumes", len(pvMetrics))
 	return pvMetrics
-}
-
-func (pvc *PersistentVolumeCollector) collectPVCMetrics(pvcs []v1.PersistentVolumeClaim) []models.PVCMetric {
-
-	pvcMetrics := make([]models.PVCMetric, 0, len(pvcs))
-
-	for _, pvc := range pvcs {
-		if pvc.Labels == nil {
-			pvc.Labels = make(map[string]string)
-		}
-		metric := models.PVCMetric{
-			Name:      pvc.Name,
-			Namespace: pvc.Namespace,
-			Phase:     string(pvc.Status.Phase),
-			Capacity:  pvc.Status.Capacity.Storage().Value(),
-			Labels:    pvc.Labels,
-		}
-
-		if pvc.Spec.StorageClassName != nil {
-			metric.StorageClass = *pvc.Spec.StorageClassName
-		}
-
-		if pvc.Spec.VolumeName != "" {
-			metric.BoundPV = pvc.Spec.VolumeName
-		}
-
-		pvcMetrics = append(pvcMetrics, metric)
-	}
-
-	logrus.Debugf("Collected metrics for %d persistent volume claims", len(pvcMetrics))
-	return pvcMetrics
 }

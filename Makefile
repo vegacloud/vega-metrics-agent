@@ -11,7 +11,8 @@
 APPLICATION = vega-metrics-agent
 VERSION := $(shell cat VERSION)
 DOCKER_IMAGE = public.ecr.aws/c0f8b9o4/vegacloud/${APPLICATION}
-GOLANG_VERSION ?= 1.22
+DOCKER_IMAGE_DEV = ${APPLICATION}
+GOLANG_VERSION ?= 1.23
 
 # Go commands
 GO_BUILD = CGO_ENABLED=0 GOOS=linux go build -ldflags "-X main.version=${VERSION}" -o bin/${APPLICATION}
@@ -25,11 +26,27 @@ GO_VET = go vet ./...
 DOCKER_BUILD = docker build -f Dockerfile \
 	--build-arg golang_version=${GOLANG_VERSION} \
 	--build-arg app_version=${VERSION} \
-	-t ${DOCKER_IMAGE}:${VERSION} .
+	-t ${DOCKER_IMAGE}:${VERSION} \
+	-t ${DOCKER_IMAGE}:latest .
+
+DOCKER_BUILD_DEV = docker build -f Dockerfile \
+	--build-arg golang_version=${GOLANG_VERSION} \
+	--build-arg app_version=${VERSION} \
+	-t ${DOCKER_IMAGE_DEV}:${VERSION} .
+
 
 # Default target
 .PHONY: all
 all: fmt vet lint sec test build docker-build
+
+# Dev target
+.PHONY: alldev
+alldev: fmt vet lint sec build docker-build-dev
+
+# Dev target without security checks
+.PHONY: alldevnosec
+alldevnosec: fmt vet lint build docker-build-dev
+
 
 # Format Go code
 .PHONY: fmt
@@ -74,10 +91,19 @@ docker-build:
 	@echo "Building Docker image..."
 	${DOCKER_BUILD}
 
+
+# Build Docker image
+.PHONY: docker-build-dev
+docker-build-dev:
+	@echo "Building Docker dev image..."
+	${DOCKER_BUILD_DEV}
+
+
 # Push Docker image
 .PHONY: docker-push
 docker-push:
 	docker push ${DOCKER_IMAGE}:${VERSION}
+	docker push ${DOCKER_IMAGE}:latest
 
 # Clean build artifacts
 .PHONY: clean

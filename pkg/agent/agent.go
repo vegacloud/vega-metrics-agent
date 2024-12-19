@@ -18,16 +18,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"k8s.io/client-go/kubernetes"
-	metricsclientset "k8s.io/metrics/pkg/client/clientset/versioned"
+
+	"crypto/tls"
 
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/collectors"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/utils"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/transport"
 )
 
 // MetricsAgent is the main struct for the metrics agent
@@ -41,53 +44,47 @@ type MetricsAgent struct {
 
 // NewMetricsAgent creates a new MetricsAgent
 func NewMetricsAgent(cfg *config.Config,
-	clientset kubernetes.Interface,
-	metricsClientset metricsclientset.Interface,
 	logger *logrus.Entry,
-	k8sConfig utils.K8sClientConfig,
 ) (*MetricsAgent, error) {
 	logger = logger.WithField("function", "NewMetricsAgent")
 
-	k8sClientset, ok := clientset.(*kubernetes.Clientset)
-	if !ok {
-		return nil, fmt.Errorf("invalid clientset type: expected *kubernetes.Clientset, got %T", clientset)
-	}
-	// Create an empty map to hold the collectors
-	collectorsMap := make(map[string]collectors.Collector)
-	metricsClientsetImpl, ok := metricsClientset.(*metricsclientset.Clientset)
-	if !ok {
-		return nil, fmt.Errorf(
-			"invalid metrics clientset type: expected *metricsclientset.Clientset, got %T",
-			metricsClientset,
-		)
-	}
-
-	// Initialize the NodeCollector
-	nodeCollector, err := collectors.NewNodeCollector(k8sClientset, metricsClientsetImpl, cfg)
+	// Get existing client config
+	clientConfig, err := utils.GetExistingClientConfig()
 	if err != nil {
-		logger.Fatalf("Failed to create NodeCollector: %v", err)
+		return nil, fmt.Errorf("failed to get existing client config: %w", err)
 	}
-	collectorsMap["node"] = nodeCollector
 
-	// Initialize the PodCollector (assuming it doesn't return an error)
-	podCollector := collectors.NewPodCollector(k8sClientset, metricsClientsetImpl, cfg)
-	collectorsMap["pod"] = podCollector
+	// Configure transport once for the clientset
+	token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read service account token: %w", err)
+	}
 
-	// Initialize the ClusterCollector (assuming it doesn't return an error)
-	clusterCollector := collectors.NewClusterCollector(k8sClientset, cfg, k8sConfig)
-	collectorsMap["cluster"] = clusterCollector
+	clientConfig.Clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.VegaInsecure}} // #nosec G402
 
-	// Continue initializing other collectors similarly
-	collectorsMap["pv"] = collectors.NewPersistentVolumeCollector(k8sClientset, cfg)
-	collectorsMap["namespace"] = collectors.NewNamespaceCollector(k8sClientset, cfg)
-	collectorsMap["workload"] = collectors.NewWorkloadCollector(k8sClientset, cfg)
-	collectorsMap["network"] = collectors.NewNetworkingCollector(k8sClientset, cfg)
-	collectorsMap["job"] = collectors.NewJobCollector(k8sClientset, cfg)
-	collectorsMap["cronjob"] = collectors.NewCronJobCollector(k8sClientset, cfg)
-	collectorsMap["HPA"] = collectors.NewHPACollector(k8sClientset, cfg)
-	collectorsMap["replicationController"] = collectors.NewReplicationControllerCollector(k8sClientset, cfg)
+	clientConfig.Clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
+		string(token),
+		clientConfig.Clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
+	)
 
-	collectorsMap["replicasets"] = collectors.NewReplicaSetCollector(k8sClientset, cfg)
+	// Create collectors with the properly configured clientset
+	collectorsMap := make(map[string]collectors.Collector)
+	collectorsMap["cluster"] = collectors.NewClusterCollector(clientConfig.Clientset, cfg)
+	collectorsMap["namespace"] = collectors.NewNamespaceCollector(clientConfig.Clientset, cfg)
+	collectorsMap["node"] = collectors.NewNodeCollector(clientConfig.Clientset, cfg)
+	collectorsMap["pod"] = collectors.NewPodCollector(clientConfig.Clientset, cfg)
+	collectorsMap["pv"] = collectors.NewPersistentVolumeCollector(clientConfig.Clientset, cfg)
+	collectorsMap["pvc"] = collectors.NewPersistentVolumeClaimCollector(clientConfig.Clientset, cfg)
+	collectorsMap["workload"] = collectors.NewWorkloadCollector(clientConfig.Clientset, cfg)
+	collectorsMap["daemonset"] = collectors.NewDaemonSetCollector(clientConfig.Clientset, cfg)
+	collectorsMap["network"] = collectors.NewNetworkingCollector(clientConfig.Clientset, cfg)
+	collectorsMap["job"] = collectors.NewJobCollector(clientConfig.Clientset, cfg)
+	collectorsMap["cronjob"] = collectors.NewCronJobCollector(clientConfig.Clientset, cfg)
+	collectorsMap["hpa"] = collectors.NewHPACollector(clientConfig.Clientset, cfg)
+	collectorsMap["replicationController"] = collectors.NewReplicationControllerCollector(clientConfig.Clientset, cfg)
+	collectorsMap["storageclass"] = collectors.NewStorageClassCollector(clientConfig.Clientset, cfg)
+	collectorsMap["replicasets"] = collectors.NewReplicaSetCollector(clientConfig.Clientset, cfg)
+
 	logger.Debugf("loaded %v collectors", len(collectorsMap))
 
 	// Initialize the uploader
@@ -95,18 +92,21 @@ func NewMetricsAgent(cfg *config.Config,
 	if err != nil {
 		return nil, fmt.Errorf("failed to create S3 uploader: %w", err)
 	}
+
 	ma := &MetricsAgent{
 		config:     cfg,
 		collectors: collectorsMap,
 		uploader:   uploader,
 		logger:     logger.WithField("component", "MetricsAgent"),
 		httpClient: &http.Client{
-			Timeout: 90 * time.Second, // Set a timeout for HTTP requests
+			Timeout: 90 * time.Second,
 		},
 	}
+
 	if cfg.ShouldAgentCheckIn {
-		logrus.Info("Checking in with the metrics server")
+		logger.Debug("Attempting to check in with the metrics server")
 		if err := ma.Checkin(context.Background()); err != nil {
+			logger.WithError(err).Debug("Checkin attempt failed with detailed error")
 			logrus.WithError(err).Error("Failed to check in with the metrics server")
 		}
 	}
@@ -174,7 +174,7 @@ func (ma *MetricsAgent) collectAndUploadMetrics(ctx context.Context) error {
 	startTime := time.Now()
 	if ma.config.ShouldAgentCheckIn {
 		go func() {
-			logrus.Info("Checking in with the metrics server")
+			logrus.Info("Starting Kubernetes Data Collection")
 			if err := ma.Checkin(ctx); err != nil {
 				logrus.WithError(err).Error("Failed to check in with the metrics server")
 			}

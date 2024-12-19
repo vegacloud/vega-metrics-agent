@@ -7,12 +7,12 @@
 # the Business Source License, use of this software will be governed
 # by the Apache License, Version 2.0, included in the file
 # licenses/APL.txt.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: vega-metrics-agent-secret
-  namespace: {{ .Values.namespace }}
-type: Opaque
-stringData:
-  VEGA_CLIENT_ID: "{{ .Values.vega.clientId }}"
-  VEGA_CLIENT_SECRET: "{{ .Values.vega.clientSecret }}"
+
+# kind-config.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+  - role: worker

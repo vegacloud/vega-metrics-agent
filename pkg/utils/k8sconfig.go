@@ -15,9 +15,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 
 	"github.com/sirupsen/logrus"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
+	authenticationv1 "k8s.io/api/authentication/v1"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -35,18 +39,91 @@ type K8sClientConfig struct {
 	ClusterVersion     string
 }
 
-// GetClientConfig returns a Kubernetes ClientConfig using in-cluster or kubeconfig
-func GetClientConfig(ctx context.Context, cfg *config.Config) (*K8sClientConfig, error) {
-	logrus.Debug("GetClientConfig: Attempting to get Kubernetes client configuration")
+var (
+	instance *K8sClientConfig
+	once     sync.Once
+)
 
-	inClusterConfig, err := rest.InClusterConfig()
+// logCurrentIdentity attempts to get and log the current service account identity
+func logCurrentIdentity(ctx context.Context, clientset *kubernetes.Clientset) {
+	logger := logrus.WithField("function", "logCurrentIdentity")
+
+	// Try to get self review
+	selfReview := &authenticationv1.SelfSubjectReview{}
+	result, err := clientset.AuthenticationV1().SelfSubjectReviews().Create(ctx, selfReview, metav1.CreateOptions{})
 	if err != nil {
-		logrus.Debug("GetClientConfig: Not in cluster, attempting to use kubeconfig")
-		return getOutOfClusterConfig(ctx, cfg)
+		logger.WithError(err).Error("Failed to get self subject review")
+		return
 	}
 
-	logrus.Info("GetClientConfig: Using in-cluster configuration")
-	return createClientConfig(ctx, inClusterConfig, true, cfg)
+	logger.WithFields(logrus.Fields{
+		"username": result.Status.UserInfo.Username,
+		"uid":      result.Status.UserInfo.UID,
+		"groups":   result.Status.UserInfo.Groups,
+	}).Info("Current identity")
+
+	// Try to get self access review
+	accessReview := &authorizationv1.SelfSubjectRulesReview{
+		Spec: authorizationv1.SelfSubjectRulesReviewSpec{
+			Namespace: "default",
+		},
+	}
+	accessResult, err := clientset.AuthorizationV1().SelfSubjectRulesReviews().Create(ctx, accessReview, metav1.CreateOptions{})
+	if err != nil {
+		logger.WithError(err).Error("Failed to get self subject rules review")
+		return
+	}
+
+	logger.WithField("rules", accessResult.Status.ResourceRules).Debug("Current permissions")
+}
+
+// GetClientConfig returns a Kubernetes ClientConfig using in-cluster or kubeconfig
+func GetClientConfig(ctx context.Context, cfg *config.Config) (*K8sClientConfig, error) {
+	var err error
+	once.Do(func() {
+		logrus.Debug("GetClientConfig: Attempting to get Kubernetes client configuration")
+
+		inClusterConfig, inClusterErr := rest.InClusterConfig()
+		if inClusterErr != nil {
+			logrus.Debug("GetClientConfig: Not in cluster, attempting to use kubeconfig")
+			instance, err = getOutOfClusterConfig(ctx, cfg)
+			return
+		}
+
+		// Explicitly set the bearer token from the specified path
+		token, tokenErr := os.ReadFile(cfg.VegaBearerTokenPath)
+		if tokenErr != nil {
+			err = fmt.Errorf("failed to read service account token from %s: %w", cfg.VegaBearerTokenPath, tokenErr)
+			return
+		}
+
+		// Override the token in the config
+		inClusterConfig.BearerToken = string(token)
+		inClusterConfig.BearerTokenFile = cfg.VegaBearerTokenPath
+
+		logrus.WithFields(logrus.Fields{
+			"token_path": cfg.VegaBearerTokenPath,
+			"token_len":  len(string(token)),
+		}).Debug("Using explicit service account token")
+
+		instance, err = createClientConfig(ctx, inClusterConfig, true, cfg)
+		if err != nil {
+			return
+		}
+
+		// Log the current identity
+		logCurrentIdentity(ctx, instance.Clientset)
+	})
+
+	return instance, nil
+}
+
+// GetExistingClientConfig returns the existing client config without creating a new one
+func GetExistingClientConfig() (*K8sClientConfig, error) {
+	if instance == nil {
+		return nil, fmt.Errorf("kubernetes client configuration has not been initialized")
+	}
+	return instance, nil
 }
 
 func getOutOfClusterConfig(ctx context.Context, cfg *config.Config) (*K8sClientConfig, error) {
@@ -108,6 +185,7 @@ func createClientConfig(
 }
 
 func enrichClientConfig(ctx context.Context, config *K8sClientConfig) error {
+
 	var err error
 
 	// Get cluster UID
@@ -127,6 +205,15 @@ func enrichClientConfig(ctx context.Context, config *K8sClientConfig) error {
 
 // getNamespaceUID retrieves the UID of a given namespace
 func getNamespaceUID(ctx context.Context, clientset *kubernetes.Clientset, namespace string) (string, error) {
+	logrus.Debugf("Attempting to get namespace %s", namespace)
+
+	_, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	if err != nil {
+		logrus.Debugf("Error reading service account token: %v", err)
+	} else {
+		logrus.Debugf("Service account token exists and is readable")
+	}
+
 	ns, err := clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("getNamespaceUID: failed to get namespace %s: %v", namespace, err)
@@ -141,4 +228,29 @@ func getClusterVersion(clientset *kubernetes.Clientset) (string, error) {
 		return "", fmt.Errorf("getClusterVersion: failed to get server version: %v", err)
 	}
 	return version.String(), nil
+}
+
+// VerifyClientIdentity checks if the client is using the expected service account
+func VerifyClientIdentity(ctx context.Context, clientset *kubernetes.Clientset, expectedNamespace string) error {
+	logger := logrus.WithField("function", "VerifyClientIdentity")
+
+	selfReview := &authenticationv1.SelfSubjectReview{}
+	result, err := clientset.AuthenticationV1().SelfSubjectReviews().Create(ctx, selfReview, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get self subject review: %w", err)
+	}
+
+	// Log the identity information
+	logger.WithFields(logrus.Fields{
+		"username": result.Status.UserInfo.Username,
+		"uid":      result.Status.UserInfo.UID,
+		"groups":   result.Status.UserInfo.Groups,
+	}).Info("Current client identity")
+
+	// Verify the service account namespace
+	if !strings.Contains(result.Status.UserInfo.Username, expectedNamespace) {
+		return fmt.Errorf("client is not using the expected service account in namespace %s", expectedNamespace)
+	}
+
+	return nil
 }

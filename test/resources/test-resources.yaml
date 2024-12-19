@@ -1,0 +1,405 @@
+# Copyright 2024 Vega Cloud, Inc.
+
+# Use of this software is governed by the Business Source License
+# included in the file licenses/BSL.txt.
+
+# As of the Change Date specified in that file, in accordance with
+# the Business Source License, use of this software will be governed
+# by the Apache License, Version 2.0, included in the file
+# licenses/APL.txt.
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: test-metrics
+  labels:
+    environment: test
+    purpose: metrics-collection
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: test-quota
+  namespace: test-metrics
+spec:
+  hard:
+    pods: "10"
+    requests.cpu: "2"
+    requests.memory: "1Gi"
+    limits.cpu: "4"
+    limits.memory: "2Gi"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: test-limitrange
+  namespace: test-metrics
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+      default:
+        cpu: "200m"
+        memory: "256Mi"
+      max:
+        cpu: "500m"
+        memory: "512Mi"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-config
+  namespace: test-metrics
+  labels:
+    app: test-app
+data:
+  example-key: "example-value"
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: test-storageclass
+  labels:
+    environment: test
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: test-pv
+  labels:
+    environment: test
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: test-storageclass
+  hostPath:
+    path: /tmp/test-pv
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-pvc
+  namespace: test-metrics
+  labels:
+    environment: test
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: test-storageclass
+  resources:
+    requests:
+      storage: 500Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-pod
+  namespace: test-metrics
+  labels:
+    app: test-pod
+  annotations:
+    test-annotation: "true"
+spec:
+  readinessGates:
+    - conditionType: "test.scheduling.k8s.io/ready"
+  securityContext:
+    fsGroup: 101
+    runAsUser: 101
+    runAsGroup: 101
+  containers:
+    - name: main-container
+      image: nginx:stable
+      ports:
+        - containerPort: 8080
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "200m"
+          memory: "256Mi"
+      volumeMounts:
+        - name: test-volume
+          mountPath: /data
+        - name: nginx-cache
+          mountPath: /var/cache/nginx
+        - name: nginx-run
+          mountPath: /var/run
+        - name: nginx-conf
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: nginx.conf
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+  initContainers:
+    - name: init-test
+      image: busybox
+      command: 
+        - sh
+        - -c
+        - |
+          cat <<EOF > /etc/nginx/nginx.conf
+          server {
+              listen 8080;
+              server_name localhost;
+              location / {
+                  root   /usr/share/nginx/html;
+                  index  index.html index.htm;
+              }
+          }
+          EOF
+      volumeMounts:
+        - name: nginx-conf
+          mountPath: /etc/nginx
+  volumes:
+    - name: test-volume
+      persistentVolumeClaim:
+        claimName: test-pvc
+    - name: nginx-cache
+      emptyDir: {}
+    - name: nginx-run
+      emptyDir: {}
+    - name: nginx-conf
+      emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+  namespace: test-metrics
+  labels:
+    app: test-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: test-deployment
+  template:
+    metadata:
+      labels:
+        app: test-deployment
+    spec:
+      containers:
+        - name: web
+          image: nginx:stable
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: test-daemonset
+  namespace: test-metrics
+  labels:
+    app: test-daemonset
+spec:
+  selector:
+    matchLabels:
+      app: test-daemonset
+  template:
+    metadata:
+      labels:
+        app: test-daemonset
+    spec:
+      containers:
+        - name: daemon
+          image: nginx:stable
+          ports:
+            - containerPort: 8080
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: test-statefulset
+  namespace: test-metrics
+  labels:
+    app: test-statefulset
+spec:
+  serviceName: "test-statefulset-service"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-statefulset
+  template:
+    metadata:
+      labels:
+        app: test-statefulset
+    spec:
+      containers:
+        - name: stateful
+          image: nginx:stable
+          ports:
+            - containerPort: 8080
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: test-job
+  namespace: test-metrics
+  labels:
+    app: test-job
+spec:
+  completions: 1
+  parallelism: 1
+  template:
+    metadata:
+      labels:
+        app: test-job
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: job
+          image: busybox
+          command: ["sh", "-c", "echo Job Completed; sleep 2"]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: test-cronjob
+  namespace: test-metrics
+  labels:
+    app: test-cronjob
+spec:
+  schedule: "*/5 * * * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: test-cronjob
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: cron
+              image: busybox
+              command: ["sh", "-c", "echo CronJob Run; sleep 1"]
+---
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: test-rc
+  namespace: test-metrics
+  labels:
+    app: test-rc
+spec:
+  replicas: 1
+  selector:
+    app: test-rc
+  template:
+    metadata:
+      labels:
+        app: test-rc
+    spec:
+      containers:
+        - name: rc-container
+          image: nginx:stable
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-service
+  namespace: test-metrics
+  labels:
+    app: test-service
+spec:
+  selector:
+    app: test-deployment
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test-ingress
+  namespace: test-metrics
+  labels:
+    app: test-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+    - host: "test.example.com"
+      http:
+        paths:
+          - path: "/"
+            pathType: Prefix
+            backend:
+              service:
+                name: test-service
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: test-networkpolicy
+  namespace: test-metrics
+  labels:
+    app: test-networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app: test-pod
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              environment: test
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: test-hpa
+  namespace: test-metrics
+  labels:
+    app: test-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: test-deployment
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: test-pdb
+  namespace: test-metrics
+  labels:
+    app: test-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: test-deployment
