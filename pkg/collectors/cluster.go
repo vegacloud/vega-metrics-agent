@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
@@ -45,6 +46,29 @@ func NewClusterCollector(clientset *kubernetes.Clientset, cfg *config.Config) *C
 
 // CollectMetrics collects cluster-wide metrics
 func (cc *ClusterCollector) CollectMetrics(ctx context.Context) (interface{}, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"panic":      r,
+				"stacktrace": string(debug.Stack()),
+			}).Error("Recovered from panic in HPACollector.CollectMetrics")
+		}
+	}()
+
+	metrics, err := cc.CollectClusterMetrics(ctx)
+	if err != nil {
+		logrus.WithFields(logrus.Fields{
+			"error": err,
+		}).Error("Failed to collect HPA metrics")
+		return []models.ClusterMetrics{}, nil
+	}
+
+	logrus.WithField("count", len(metrics)).Debug("Successfully collected HPA metrics")
+	return metrics, nil
+}
+
+// CollectClusterMetrics collects cluster-wide metrics
+func (cc *ClusterCollector) CollectClusterMetrics(ctx context.Context) ([]models.ClusterMetrics, error) {
 	logger := logrus.WithField("collector", "ClusterCollector")
 
 	// Add debug logging for the client configuration
@@ -72,8 +96,8 @@ func (cc *ClusterCollector) CollectMetrics(ctx context.Context) (interface{}, er
 		return nil, fmt.Errorf("failed to list pods: %w", err)
 	}
 	logger.Debugf("Successfully listed %d pods", len(pods.Items))
-
-	metrics := &models.ClusterMetrics{
+	var metrics []models.ClusterMetrics
+	clusterMetrics := models.ClusterMetrics{
 		KubernetesVersion: clusterVersion,
 		NodeCount:         len(nodes.Items),
 		PodCount:          len(pods.Items),
@@ -82,22 +106,23 @@ func (cc *ClusterCollector) CollectMetrics(ctx context.Context) (interface{}, er
 		PodLabels:         make(map[string]map[string]string),
 	}
 
-	metrics.TotalCapacity = cc.calculateTotalCapacity(nodes.Items)
-	metrics.TotalAllocatable = cc.calculateTotalAllocatable(nodes.Items)
-	metrics.TotalRequests = cc.calculateTotalRequests(pods.Items)
-	metrics.TotalLimits = cc.calculateTotalLimits(pods.Items)
+	clusterMetrics.TotalCapacity = cc.calculateTotalCapacity(nodes.Items)
+	clusterMetrics.TotalAllocatable = cc.calculateTotalAllocatable(nodes.Items)
+	clusterMetrics.TotalRequests = cc.calculateTotalRequests(pods.Items)
+	clusterMetrics.TotalLimits = cc.calculateTotalLimits(pods.Items)
 
 	// Collect labels for nodes
 	for _, node := range nodes.Items {
-		metrics.NodeLabels[node.Name] = node.Labels
+		clusterMetrics.NodeLabels[node.Name] = node.Labels
 	}
 
 	// Collect labels for pods
 	for _, pod := range pods.Items {
 		podKey := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
-		metrics.PodLabels[podKey] = pod.Labels
+		clusterMetrics.PodLabels[podKey] = pod.Labels
 	}
 
+	metrics = append(metrics, clusterMetrics)
 	return metrics, nil
 }
 

@@ -75,7 +75,7 @@ func (nc *NetworkingCollector) CollectMetrics(ctx context.Context) (interface{},
 }
 
 // CollectNetworkingMetrics collects metrics from Kubernetes networking resources.
-func (nc *NetworkingCollector) CollectNetworkingMetrics(ctx context.Context) (*models.NetworkingMetrics, error) {
+func (nc *NetworkingCollector) CollectNetworkingMetrics(ctx context.Context) ([]models.NetworkingMetrics, error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logrus.WithFields(logrus.Fields{
@@ -85,28 +85,31 @@ func (nc *NetworkingCollector) CollectNetworkingMetrics(ctx context.Context) (*m
 		}
 	}()
 
-	metrics := &models.NetworkingMetrics{}
+	metrics := make([]models.NetworkingMetrics, 0)
+	networkMetrics := models.NetworkingMetrics{}
 
 	services, err := nc.collectServiceMetrics(ctx)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to collect service metrics")
 	} else {
-		metrics.Services = services
+		networkMetrics.Services = services
 	}
 
 	ingresses, err := nc.collectIngressMetrics(ctx)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to collect ingress metrics")
 	} else {
-		metrics.Ingresses = ingresses
+		networkMetrics.Ingresses = ingresses
 	}
 
 	networkPolicies, err := nc.collectNetworkPolicyMetrics(ctx)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to collect network policy metrics")
 	} else {
-		metrics.NetworkPolicies = networkPolicies
+		networkMetrics.NetworkPolicies = networkPolicies
 	}
+
+	metrics = append(metrics, networkMetrics)
 
 	return metrics, nil
 }
