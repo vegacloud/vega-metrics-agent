@@ -146,6 +146,12 @@ func (u *S3Uploader) uploadToS3(ctx context.Context, presignedURL string, data [
 	return lastErr
 }
 
+// MetricsUpload is the struct for the metrics upload
+type MetricsUpload struct {
+	SchemaVersion string      `json:"schemaVersion"`
+	Items         interface{} `json:"items"`
+}
+
 // UploadMetrics uploads metrics to S3
 func (u *S3Uploader) UploadMetrics(ctx context.Context, metrics map[string]interface{}) error {
 	var wg sync.WaitGroup
@@ -161,9 +167,12 @@ func (u *S3Uploader) UploadMetrics(ctx context.Context, metrics map[string]inter
 			// Acquire a slot in the semaphore
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }() // Release the slot when done
-
+			metricsUpload := MetricsUpload{
+				SchemaVersion: "1.2.0",
+				Items:         data,
+			}
 			// Marshal the metrics data to JSON
-			jsonData, err := json.Marshal(data)
+			jsonData, err := json.Marshal(metricsUpload)
 			if err != nil {
 				errChan <- fmt.Errorf("failed to marshal metrics for collector %s: %w", collectorName, err)
 				return

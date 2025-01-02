@@ -227,10 +227,11 @@ func (ma *MetricsAgent) Checkin(ctx context.Context) error {
 
 	// Prepare the payload with the required fields
 	payload := map[string]string{
-		"agent_id":     ma.config.AgentID,
-		"org_slug":     ma.config.VegaOrgSlug,
-		"client_id":    ma.config.VegaClientID,
-		"cluster_name": ma.config.VegaClusterName,
+		"agent_id":       ma.config.AgentID,
+		"org_slug":       ma.config.VegaOrgSlug,
+		"client_id":      ma.config.VegaClientID,
+		"cluster_name":   ma.config.VegaClusterName,
+		"schema_version": "1.2.0", // TODO: make this dynamic
 	}
 
 	// Marshal the payload to JSON
