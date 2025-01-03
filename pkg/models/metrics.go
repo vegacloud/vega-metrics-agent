@@ -69,7 +69,6 @@ type EnhancedPodMetrics struct {
 	TopologySpread      []TopologySpreadConstraint  `json:"topologySpread,omitempty"`
 	Overhead            *PodOverheadMetrics         `json:"overhead,omitempty"`
 	SchedulingGates     []PodSchedulingGate         `json:"schedulingGates,omitempty"`
-	SecurityContext     *SecurityContextMetrics     `json:"securityContext,omitempty"`
 	Affinity            *AffinityMetrics            `json:"affinity,omitempty"`
 	InitContainers      []InitContainerMetrics      `json:"initContainers,omitempty"`
 	EphemeralContainers []EphemeralContainerMetrics `json:"ephemeralContainers,omitempty"`
@@ -1153,17 +1152,6 @@ type PodSchedulingGate struct {
 	Name   string     `json:"name"`
 	Active bool       `json:"active"`
 	Since  *time.Time `json:"since,omitempty"`
-}
-
-// SecurityContextMetrics represents security context information
-type SecurityContextMetrics struct {
-	RunAsUser      *int64            `json:"runAsUser,omitempty"`
-	RunAsGroup     *int64            `json:"runAsGroup,omitempty"`
-	FSGroup        *int64            `json:"fsGroup,omitempty"`
-	RunAsNonRoot   *bool             `json:"runAsNonRoot,omitempty"`
-	SELinuxOptions map[string]string `json:"seLinuxOptions,omitempty"`
-	Sysctls        []string          `json:"sysctls,omitempty"`
-	SeccompProfile string            `json:"seccompProfile,omitempty"`
 }
 
 // AffinityMetrics represents pod affinity/anti-affinity rules

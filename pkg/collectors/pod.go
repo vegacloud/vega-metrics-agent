@@ -261,9 +261,6 @@ func (pc *PodCollector) collectSinglePodMetrics(ctx context.Context, pod v1.Pod)
 		})
 	}
 
-	// Collect security context
-	metrics.SecurityContext = pc.collectSecurityContext(pod)
-
 	// Collect QoS details
 	metrics.QoSDetails = pc.collectQoSDetails(pod)
 
@@ -488,30 +485,6 @@ func (pc *PodCollector) collectTopologySpread(pod v1.Pod) []models.TopologySprea
 		})
 	}
 	return constraints
-}
-
-func (pc *PodCollector) collectSecurityContext(pod v1.Pod) *models.SecurityContextMetrics {
-	if pod.Spec.SecurityContext == nil {
-		return nil
-	}
-
-	return &models.SecurityContextMetrics{
-		RunAsUser:    pod.Spec.SecurityContext.RunAsUser,
-		RunAsGroup:   pod.Spec.SecurityContext.RunAsGroup,
-		FSGroup:      pod.Spec.SecurityContext.FSGroup,
-		RunAsNonRoot: pod.Spec.SecurityContext.RunAsNonRoot,
-		SELinuxOptions: func() map[string]string {
-			if pod.Spec.SecurityContext.SELinuxOptions != nil {
-				return map[string]string{
-					"user":  pod.Spec.SecurityContext.SELinuxOptions.User,
-					"role":  pod.Spec.SecurityContext.SELinuxOptions.Role,
-					"type":  pod.Spec.SecurityContext.SELinuxOptions.Type,
-					"level": pod.Spec.SecurityContext.SELinuxOptions.Level,
-				}
-			}
-			return nil
-		}(),
-	}
 }
 
 func (pc *PodCollector) collectQoSDetails(pod v1.Pod) *models.QoSMetrics {

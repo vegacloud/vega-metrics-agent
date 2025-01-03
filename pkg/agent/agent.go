@@ -81,9 +81,9 @@ func NewMetricsAgent(cfg *config.Config,
 	collectorsMap["job"] = collectors.NewJobCollector(clientConfig.Clientset, cfg)
 	collectorsMap["cronjob"] = collectors.NewCronJobCollector(clientConfig.Clientset, cfg)
 	collectorsMap["hpa"] = collectors.NewHPACollector(clientConfig.Clientset, cfg)
-	collectorsMap["replicationController"] = collectors.NewReplicationControllerCollector(clientConfig.Clientset, cfg)
+	collectorsMap["replicationcontroller"] = collectors.NewReplicationControllerCollector(clientConfig.Clientset, cfg)
 	collectorsMap["storageclass"] = collectors.NewStorageClassCollector(clientConfig.Clientset, cfg)
-	collectorsMap["replicasets"] = collectors.NewReplicaSetCollector(clientConfig.Clientset, cfg)
+	collectorsMap["replicaset"] = collectors.NewReplicaSetCollector(clientConfig.Clientset, cfg)
 
 	logger.Debugf("loaded %v collectors", len(collectorsMap))
 
@@ -227,10 +227,11 @@ func (ma *MetricsAgent) Checkin(ctx context.Context) error {
 
 	// Prepare the payload with the required fields
 	payload := map[string]string{
-		"agent_id":     ma.config.AgentID,
-		"org_slug":     ma.config.VegaOrgSlug,
-		"client_id":    ma.config.VegaClientID,
-		"cluster_name": ma.config.VegaClusterName,
+		"agent_id":       ma.config.AgentID,
+		"org_slug":       ma.config.VegaOrgSlug,
+		"client_id":      ma.config.VegaClientID,
+		"cluster_name":   ma.config.VegaClusterName,
+		"schema_version": "1.2.0", // TODO: make this dynamic
 	}
 
 	// Marshal the payload to JSON

@@ -75,7 +75,7 @@ func (wc *WorkloadCollector) CollectMetrics(ctx context.Context) (interface{}, e
 }
 
 // CollectWorkloadMetrics collects metrics from Kubernetes workloads.
-func (wc *WorkloadCollector) CollectWorkloadMetrics(ctx context.Context) (*models.WorkloadMetrics, error) {
+func (wc *WorkloadCollector) CollectWorkloadMetrics(ctx context.Context) ([]models.WorkloadMetrics, error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logrus.WithFields(logrus.Fields{
@@ -85,14 +85,15 @@ func (wc *WorkloadCollector) CollectWorkloadMetrics(ctx context.Context) (*model
 		}
 	}()
 
-	metrics := &models.WorkloadMetrics{}
+	metrics := make([]models.WorkloadMetrics, 0)
+	workloadMetrics := models.WorkloadMetrics{}
 
 	// Collect deployment metrics
 	deployments, err := wc.collectDeploymentMetrics(ctx)
 	if err != nil {
 		logrus.WithError(err).Warn("Failed to collect deployment metrics")
 	} else {
-		metrics.Deployments = deployments
+		workloadMetrics.Deployments = deployments
 		logrus.WithField("count", len(deployments)).Debug("Successfully collected deployment metrics")
 	}
 
@@ -101,7 +102,7 @@ func (wc *WorkloadCollector) CollectWorkloadMetrics(ctx context.Context) (*model
 	if err != nil {
 		logrus.WithError(err).Warn("Failed to collect statefulset metrics")
 	} else {
-		metrics.StatefulSets = statefulSets
+		workloadMetrics.StatefulSets = statefulSets
 		logrus.WithField("count", len(statefulSets)).Debug("Successfully collected statefulset metrics")
 	}
 
@@ -110,7 +111,7 @@ func (wc *WorkloadCollector) CollectWorkloadMetrics(ctx context.Context) (*model
 	if err != nil {
 		logrus.WithError(err).Warn("Failed to collect daemonset metrics")
 	} else {
-		metrics.DaemonSets = daemonSets
+		workloadMetrics.DaemonSets = daemonSets
 		logrus.WithField("count", len(daemonSets)).Debug("Successfully collected daemonset metrics")
 	}
 
@@ -119,9 +120,11 @@ func (wc *WorkloadCollector) CollectWorkloadMetrics(ctx context.Context) (*model
 	if err != nil {
 		logrus.WithError(err).Warn("Failed to collect job metrics")
 	} else {
-		metrics.Jobs = jobs
+		workloadMetrics.Jobs = jobs
 		logrus.WithField("count", len(jobs)).Debug("Successfully collected job metrics")
 	}
+
+	metrics = append(metrics, workloadMetrics)
 
 	return metrics, nil
 }
