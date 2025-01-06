@@ -74,17 +74,12 @@ func main() {
 }
 
 func runRootCmd(cmd *cobra.Command, _ []string) error {
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
 	versionFlag, err := cmd.Flags().GetBool("version")
 	if err != nil {
 		return fmt.Errorf("failed to get 'version' flag: %w", err)
 	}
 	if versionFlag {
-		logrus.Infof("Vega Kubernetes and Container Metrics Agent version: %s, Schema version: %s", cfg.AgentVersion, cfg.SchemaVersion)
+		logrus.Infof("Vega Kubernetes and Container Metrics Agent version: %s, Schema version: %s", config.DefaultAgentVersion, config.DefaultSchemaVersion)
 		return nil
 	}
 	requiredFlags := []string{"client_id", "client_secret", "org_slug", "cluster_name"}
@@ -92,6 +87,11 @@ func runRootCmd(cmd *cobra.Command, _ []string) error {
 		if err := cmd.MarkFlagRequired(flag); err != nil {
 			return fmt.Errorf("failed to mark flag '%s' as required: %w", flag, err)
 		}
+	}
+
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 
 	initializeLogging(cfg)

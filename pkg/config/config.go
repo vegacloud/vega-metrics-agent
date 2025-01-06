@@ -12,6 +12,7 @@
 package config
 
 import (
+	_ "embed"
 	"time"
 )
 
@@ -47,11 +48,13 @@ type Config struct {
 }
 
 // VERSION contains the current version of the agent from the embedded VERSION file
-// go:embed VERSION
+//
+//go:embed VERSION
 var VERSION string
 
 // SCHEMAVERSION contains the current schema version from the embedded SCHEMAVERSION file
-// go:embed SCHEMAVERSION
+//
+//go:embed SCHEMAVERSION
 var SCHEMAVERSION string
 
 // Default configuration values
