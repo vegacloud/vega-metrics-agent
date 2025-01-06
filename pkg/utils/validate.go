@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// HasField checks if a field exists in a struct or pointer to struct
 func HasField(input interface{}, field string) (err error) {
 	val := reflect.ValueOf(input)
 

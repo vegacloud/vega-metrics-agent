@@ -100,10 +100,16 @@ func GetClientConfig(ctx context.Context, cfg *config.Config) (*K8sClientConfig,
 		// Override the token in the config
 		inClusterConfig.BearerToken = string(token)
 		inClusterConfig.BearerTokenFile = cfg.VegaBearerTokenPath
+		inClusterConfig.QPS = cfg.QPS
+		inClusterConfig.Burst = cfg.Burst
+		inClusterConfig.Timeout = cfg.Timeout
 
 		logrus.WithFields(logrus.Fields{
 			"token_path": cfg.VegaBearerTokenPath,
 			"token_len":  len(string(token)),
+			"qps":        cfg.QPS,
+			"burst":      cfg.Burst,
+			"timeout":    cfg.Timeout,
 		}).Debug("Using explicit service account token")
 
 		instance, err = createClientConfig(ctx, inClusterConfig, true, cfg)

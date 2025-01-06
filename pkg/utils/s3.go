@@ -148,6 +148,7 @@ func (u *S3Uploader) uploadToS3(ctx context.Context, presignedURL string, data [
 
 // MetricsUpload is the struct for the metrics upload
 type MetricsUpload struct {
+	AgentVersion  string      `json:"agentVersion"`
 	SchemaVersion string      `json:"schemaVersion"`
 	Items         interface{} `json:"items"`
 }
@@ -168,7 +169,8 @@ func (u *S3Uploader) UploadMetrics(ctx context.Context, metrics map[string]inter
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }() // Release the slot when done
 			metricsUpload := MetricsUpload{
-				SchemaVersion: "1.2.0",
+				AgentVersion:  u.config.AgentVersion,
+				SchemaVersion: u.config.SchemaVersion,
 				Items:         data,
 			}
 			// Marshal the metrics data to JSON

@@ -37,14 +37,29 @@ type Config struct {
 	VegaMaxConcurrency       int           `mapstructure:"max_concurrency"`
 	ShouldAgentCheckIn       bool          `mapstructure:"should_agent_check_in"`
 	LogLevel                 string        `mapstructure:"log_level"`
+	SchemaVersion            string        `mapstructure:"schema_version"`
+	AgentVersion             string        `mapstructure:"agent_version"`
+	ClusterVersion           string        `mapstructure:"cluster_version"`
+	ClusterProvider          string        `mapstructure:"cluster_provider"`
+	QPS                      float32       `mapstructure:"qps"`
+	Burst                    int           `mapstructure:"burst"`
+	Timeout                  time.Duration `mapstructure:"timeout"`
 }
+
+// VERSION contains the current version of the agent from the embedded VERSION file
+// go:embed VERSION
+var VERSION string
+
+// SCHEMAVERSION contains the current schema version from the embedded SCHEMAVERSION file
+// go:embed SCHEMAVERSION
+var SCHEMAVERSION string
 
 // Default configuration values
 const (
 	DefaultPollInterval             = "60m"
 	DefaultMaxConcurrency           = 8
 	DefaultS3Region                 = "us-west-2"
-	DefaultBearerTokenPath          = "/var/run/secrets/kubernetes.io/serviceaccount/token" //#nosec #nolint
+	DefaultBearerTokenPath          = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 	DefaultLogLevel                 = "INFO"
 	DefaultVegaInsecure             = false
 	DefaultStartCollectionNow       = false
@@ -55,4 +70,13 @@ const (
 	DefaultVegaNamespace            = "vegacloud"
 	DefaultShouldAgentCheckIn       = true
 	DefaultSaveLocal                = false
+	DefaultQPS                      = 100
+	DefaultBurst                    = 100
+	DefaultTimeout                  = 10 * time.Second
+)
+
+// Default versions from embedded files
+var (
+	DefaultSchemaVersion = SCHEMAVERSION
+	DefaultAgentVersion  = VERSION
 )

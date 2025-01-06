@@ -9,7 +9,7 @@
 # licenses/APL.txt.
 # Variables
 APPLICATION = vega-metrics-agent
-VERSION := $(shell cat VERSION)
+VERSION := $(shell cat pkg/config/VERSION)
 DOCKER_IMAGE = public.ecr.aws/c0f8b9o4/vegacloud/${APPLICATION}
 DOCKER_IMAGE_DEV = ${APPLICATION}
 GOLANG_VERSION ?= 1.23

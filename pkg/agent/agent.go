@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/collectors"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/utils"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/transport"
 )
@@ -42,52 +44,54 @@ type MetricsAgent struct {
 	logger     *logrus.Entry
 }
 
+// CheckinRequest represents the request structure for agent checkin operations.
+type CheckinRequest struct {
+	AgentID         string             `json:"agent_id"`
+	ClusterName     string             `json:"cluster_name"`
+	ClusterVersion  *string            `json:"cluster_version,omitempty"`
+	AgentVersion    *string            `json:"agent_version,omitempty"`
+	SchemaVersion   *string            `json:"schema_version,omitempty"`
+	ClusterProvider *string            `json:"cluster_provider,omitempty"`
+	AgentStatus     *string            `json:"agent_status,omitempty"`
+	CollectorStatus *map[string]string `json:"collector_status,omitempty"`
+}
+
 // NewMetricsAgent creates a new MetricsAgent
-func NewMetricsAgent(cfg *config.Config,
-	logger *logrus.Entry,
-) (*MetricsAgent, error) {
+func NewMetricsAgent(cfg *config.Config, logger *logrus.Entry) (*MetricsAgent, error) {
 	logger = logger.WithField("function", "NewMetricsAgent")
 
-	// Get existing client config
 	clientConfig, err := utils.GetExistingClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get existing client config: %w", err)
 	}
 
-	// Configure transport once for the clientset
 	token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read service account token: %w", err)
 	}
 
-	clientConfig.Clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.VegaInsecure}} // #nosec G402
+	restClient := clientConfig.Clientset.CoreV1().RESTClient().(*rest.RESTClient)
+	restClient.Client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.VegaInsecure}} // #nosec G402
+	restClient.Client.Transport = transport.NewBearerAuthRoundTripper(string(token), restClient.Client.Transport)
 
-	clientConfig.Clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport = transport.NewBearerAuthRoundTripper(
-		string(token),
-		clientConfig.Clientset.CoreV1().RESTClient().(*rest.RESTClient).Client.Transport,
-	)
+	clusterVersion, err := getClusterVersion(clientConfig.Clientset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster version: %w", err)
+	}
+	logger.Infof("Cluster version: %s", clusterVersion)
 
-	// Create collectors with the properly configured clientset
-	collectorsMap := make(map[string]collectors.Collector)
-	collectorsMap["cluster"] = collectors.NewClusterCollector(clientConfig.Clientset, cfg)
-	collectorsMap["namespace"] = collectors.NewNamespaceCollector(clientConfig.Clientset, cfg)
-	collectorsMap["node"] = collectors.NewNodeCollector(clientConfig.Clientset, cfg)
-	collectorsMap["pod"] = collectors.NewPodCollector(clientConfig.Clientset, cfg)
-	collectorsMap["pv"] = collectors.NewPersistentVolumeCollector(clientConfig.Clientset, cfg)
-	collectorsMap["pvc"] = collectors.NewPersistentVolumeClaimCollector(clientConfig.Clientset, cfg)
-	collectorsMap["workload"] = collectors.NewWorkloadCollector(clientConfig.Clientset, cfg)
-	collectorsMap["daemonset"] = collectors.NewDaemonSetCollector(clientConfig.Clientset, cfg)
-	collectorsMap["network"] = collectors.NewNetworkingCollector(clientConfig.Clientset, cfg)
-	collectorsMap["job"] = collectors.NewJobCollector(clientConfig.Clientset, cfg)
-	collectorsMap["cronjob"] = collectors.NewCronJobCollector(clientConfig.Clientset, cfg)
-	collectorsMap["hpa"] = collectors.NewHPACollector(clientConfig.Clientset, cfg)
-	collectorsMap["replicationcontroller"] = collectors.NewReplicationControllerCollector(clientConfig.Clientset, cfg)
-	collectorsMap["storageclass"] = collectors.NewStorageClassCollector(clientConfig.Clientset, cfg)
-	collectorsMap["replicaset"] = collectors.NewReplicaSetCollector(clientConfig.Clientset, cfg)
+	clusterProvider, err := getClusterProvider(clientConfig.Clientset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine cluster provider: %w", err)
+	}
+	logger.Infof("Cluster provider: %s", clusterProvider)
 
+	cfg.ClusterVersion = clusterVersion
+	cfg.ClusterProvider = clusterProvider
+
+	collectorsMap := initializeCollectors(clientConfig.Clientset, cfg)
 	logger.Debugf("loaded %v collectors", len(collectorsMap))
 
-	// Initialize the uploader
 	uploader, err := utils.NewS3Uploader(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create S3 uploader: %w", err)
@@ -98,9 +102,7 @@ func NewMetricsAgent(cfg *config.Config,
 		collectors: collectorsMap,
 		uploader:   uploader,
 		logger:     logger.WithField("component", "MetricsAgent"),
-		httpClient: &http.Client{
-			Timeout: 90 * time.Second,
-		},
+		httpClient: &http.Client{Timeout: 90 * time.Second},
 	}
 
 	if cfg.ShouldAgentCheckIn {
@@ -111,6 +113,27 @@ func NewMetricsAgent(cfg *config.Config,
 		}
 	}
 	return ma, nil
+}
+
+// initializeCollectors initializes the collectors map
+func initializeCollectors(clientset *kubernetes.Clientset, cfg *config.Config) map[string]collectors.Collector {
+	return map[string]collectors.Collector{
+		"cluster":               collectors.NewClusterCollector(clientset, cfg),
+		"namespace":             collectors.NewNamespaceCollector(clientset, cfg),
+		"node":                  collectors.NewNodeCollector(clientset, cfg),
+		"pod":                   collectors.NewPodCollector(clientset, cfg),
+		"pv":                    collectors.NewPersistentVolumeCollector(clientset, cfg),
+		"pvc":                   collectors.NewPersistentVolumeClaimCollector(clientset, cfg),
+		"workload":              collectors.NewWorkloadCollector(clientset, cfg),
+		"daemonset":             collectors.NewDaemonSetCollector(clientset, cfg),
+		"network":               collectors.NewNetworkingCollector(clientset, cfg),
+		"job":                   collectors.NewJobCollector(clientset, cfg),
+		"cronjob":               collectors.NewCronJobCollector(clientset, cfg),
+		"hpa":                   collectors.NewHPACollector(clientset, cfg),
+		"replicationcontroller": collectors.NewReplicationControllerCollector(clientset, cfg),
+		"storageclass":          collectors.NewStorageClassCollector(clientset, cfg),
+		"replicaset":            collectors.NewReplicaSetCollector(clientset, cfg),
+	}
 }
 
 // Run starts the metrics collection and upload process
@@ -225,16 +248,38 @@ func (ma *MetricsAgent) Checkin(ctx context.Context) error {
 	// Prepare the URL for the check-in endpoint
 	checkinURL := ma.config.MetricsCollectorAPI + "/agents/checkin"
 
-	// Prepare the payload with the required fields
-	payload := map[string]string{
-		"agent_id":       ma.config.AgentID,
-		"org_slug":       ma.config.VegaOrgSlug,
-		"client_id":      ma.config.VegaClientID,
-		"cluster_name":   ma.config.VegaClusterName,
-		"schema_version": "1.2.0", // TODO: make this dynamic
+	// Initialize the CollectorStatus map
+	collectorStatus := make(map[string]string)
+
+	// Collect metrics from each collector to determine their status
+	for name, collector := range ma.collectors {
+		_, err := collector.CollectMetrics(ctx)
+		if err != nil {
+			collectorStatus[name] = "Error"
+		} else {
+			collectorStatus[name] = "Ok"
+		}
+	}
+	var agentStatus string
+	// If any collector errors, set the agent status to error
+	if len(collectorStatus) > 0 {
+		agentStatus = "Error"
+	} else {
+		agentStatus = "Ok"
 	}
 
-	// Marshal the payload to JSON
+	// Prepare the payload using AgentCheckinRequest struct
+	payload := CheckinRequest{
+		AgentID:         ma.config.AgentID,
+		ClusterName:     ma.config.VegaClusterName,
+		ClusterVersion:  &ma.config.ClusterVersion,
+		AgentVersion:    &ma.config.AgentVersion,
+		SchemaVersion:   &ma.config.SchemaVersion,
+		ClusterProvider: &ma.config.ClusterProvider,
+		AgentStatus:     &agentStatus,
+		CollectorStatus: &collectorStatus,
+	}
+
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal check-in payload: %w", err)
@@ -275,4 +320,38 @@ func (ma *MetricsAgent) Checkin(ctx context.Context) error {
 
 	ma.logger.Debug("Successfully checked in with the metrics server")
 	return nil
+}
+
+// getClusterVersion retrieves the Kubernetes cluster version using the clientset
+func getClusterVersion(clientset *kubernetes.Clientset) (string, error) {
+	versionInfo, err := clientset.Discovery().ServerVersion()
+	if err != nil {
+		return "", fmt.Errorf("failed to get server version: %w", err)
+	}
+	return versionInfo.String(), nil
+}
+
+// getClusterProvider determines the cloud provider based on API groups
+func getClusterProvider(clientset *kubernetes.Clientset) (string, error) {
+	discoveryClient := clientset.Discovery()
+	apiGroups, err := discoveryClient.ServerGroups()
+	if err != nil {
+		return "", fmt.Errorf("failed to get API groups: %w", err)
+	}
+
+	for _, group := range apiGroups.Groups {
+		if strings.Contains(group.Name, "eks") {
+			return "AWS", nil
+		} else if strings.Contains(group.Name, "aks") {
+			return "AZURE", nil
+		} else if strings.Contains(group.Name, "gke") {
+			return "GCP", nil
+		} else if strings.Contains(group.Name, "alibabacloud") || strings.Contains(group.Name, "ack") {
+			return "ALIBABA", nil
+		} else if strings.Contains(group.Name, "oracle") || strings.Contains(group.Name, "oke") {
+			return "OCI", nil
+		}
+	}
+
+	return "Unknown", nil
 }
