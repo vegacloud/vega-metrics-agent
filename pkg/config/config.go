@@ -62,7 +62,7 @@ const (
 	DefaultPollInterval             = "60m"
 	DefaultMaxConcurrency           = 8
 	DefaultS3Region                 = "us-west-2"
-	DefaultBearerTokenPath          = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	DefaultBearerTokenPath          = "/var/run/secrets/kubernetes.io/serviceaccount/token" // #nosec G101
 	DefaultLogLevel                 = "INFO"
 	DefaultVegaInsecure             = false
 	DefaultStartCollectionNow       = false

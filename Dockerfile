@@ -32,7 +32,7 @@ RUN go mod download
 COPY . .
 
 # Build the application with the version injected
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X main.version=${app_version}" -o vega-metrics-agent
+RUN CGO_ENABLED=0 GOOS=linux go build -o vega-metrics-agent
 
 # Runtime Stage
 #FROM gcr.io/distroless/base:nonroot
