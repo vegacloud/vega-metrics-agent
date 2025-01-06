@@ -9,13 +9,13 @@
 # licenses/APL.txt.
 # Variables
 APPLICATION = vega-metrics-agent
-VERSION := $(shell cat pkg/config/VERSION)
 DOCKER_IMAGE = public.ecr.aws/c0f8b9o4/vegacloud/${APPLICATION}
-DOCKER_IMAGE_DEV = ${APPLICATION}
+VERSION = $(shell cat pkg/config/VERSION)
+DOCKER_IMAGE_DEV = 513971506177.dkr.ecr.us-west-2.amazonaws.com/metrics/${APPLICATION}
 GOLANG_VERSION ?= 1.23
 
 # Go commands
-GO_BUILD = CGO_ENABLED=0 GOOS=linux go build -ldflags "-X main.version=${VERSION}" -o bin/${APPLICATION}
+GO_BUILD = CGO_ENABLED=0 GOOS=linux go build -o bin/${APPLICATION}
 GO_FMT = go fmt ./...
 GO_LINT = golangci-lint run
 GO_SEC = ${HOME}/go/bin/gosec ./...
@@ -104,6 +104,10 @@ docker-build-dev:
 docker-push:
 	docker push ${DOCKER_IMAGE}:${VERSION}
 	docker push ${DOCKER_IMAGE}:latest
+
+.PHONY: docker-push-dev
+docker-push-dev:
+	docker push ${DOCKER_IMAGE_DEV}:${VERSION}
 
 # Clean build artifacts
 .PHONY: clean
