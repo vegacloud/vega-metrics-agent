@@ -11,7 +11,7 @@
 APPLICATION = vega-metrics-agent
 DOCKER_IMAGE = public.ecr.aws/c0f8b9o4/vegacloud/${APPLICATION}
 VERSION = $(shell cat pkg/config/VERSION)
-DOCKER_IMAGE_DEV = 513971506177.dkr.ecr.us-west-2.amazonaws.com/metrics/${APPLICATION}
+DOCKER_IMAGE_DEV = 513971506177.dkr.ecr.us-west-2.amazonaws.com/${APPLICATION}
 GOLANG_VERSION ?= 1.23
 
 # Go commands
