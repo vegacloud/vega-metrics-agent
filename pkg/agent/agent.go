@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -27,9 +28,12 @@ import (
 
 	"crypto/tls"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/collectors"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/utils"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/transport"
@@ -79,11 +83,9 @@ func NewMetricsAgent(cfg *config.Config, logger *logrus.Entry) (*MetricsAgent, e
 		return nil, fmt.Errorf("failed to get cluster version: %w", err)
 	}
 	logger.Infof("Cluster version: %s", clusterVersion)
-
-	clusterProvider, err := getClusterProvider(clientConfig.Clientset)
-	if err != nil {
-		return nil, fmt.Errorf("failed to determine cluster provider: %w", err)
-	}
+	logger.Debugf("Getting Cluster Provider before the function")
+	clusterProvider := getClusterProvider(clientConfig.Clientset, clusterVersion, logger)
+	logger.Debugf("Getting Cluster Provider after the function")
 	logger.Infof("Cluster provider: %s", clusterProvider)
 
 	cfg.ClusterVersion = clusterVersion
@@ -245,30 +247,34 @@ func (ma *MetricsAgent) collectAndUploadMetrics(ctx context.Context) error {
 // Checkin calls the /agents/checkin endpoint on the metrics server
 // with the AgentId, VegaOrgSlug, VegaClientID, and VegaClusterName
 func (ma *MetricsAgent) Checkin(ctx context.Context) error {
-	// Prepare the URL for the check-in endpoint
+	const (
+		statusError = "Error"
+		statusOk    = "Ok"
+	)
+
 	checkinURL := ma.config.MetricsCollectorAPI + "/agents/checkin"
-
-	// Initialize the CollectorStatus map
 	collectorStatus := make(map[string]string)
+	hasError := false
 
-	// Collect metrics from each collector to determine their status
 	for name, collector := range ma.collectors {
 		_, err := collector.CollectMetrics(ctx)
 		if err != nil {
-			collectorStatus[name] = "Error"
+			collectorStatus[name] = statusError
+			hasError = true
 		} else {
-			collectorStatus[name] = "Ok"
+			collectorStatus[name] = statusOk
 		}
 	}
-	var agentStatus string
-	// If any collector errors, set the agent status to error
-	if len(collectorStatus) > 0 {
-		agentStatus = "Error"
-	} else {
-		agentStatus = "Ok"
-	}
 
-	// Prepare the payload using AgentCheckinRequest struct
+	agentStatus := statusOk
+	if hasError {
+		agentStatus = statusError
+	}
+	ma.logger.WithFields(logrus.Fields{
+		"collector_status_length": len(collectorStatus),
+		"agent_status":            agentStatus,
+	}).Debug("Collector and Agent status")
+
 	payload := CheckinRequest{
 		AgentID:         ma.config.AgentID,
 		ClusterName:     ma.config.VegaClusterName,
@@ -280,39 +286,32 @@ func (ma *MetricsAgent) Checkin(ctx context.Context) error {
 		CollectorStatus: &collectorStatus,
 	}
 
+	// log payloads agent id
+	ma.logger.WithField("agent_id", ma.config.AgentID).Debug("Payload")
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal check-in payload: %w", err)
 	}
+	ma.logger.WithField("payload", string(payloadBytes)).Debug("Payload")
 
-	// Create a new HTTP request
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, checkinURL, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		return fmt.Errorf("failed to create check-in request: %w", err)
 	}
-
-	// Set the appropriate headers
 	req.Header.Set("Content-Type", "application/json")
 
-	// Get the auth token
-	token, err := utils.GetVegaAuthToken(ctx,
-		ma.httpClient,
-		ma.config)
+	token, err := utils.GetVegaAuthToken(ctx, ma.httpClient, ma.config)
 	if err != nil {
 		return fmt.Errorf("failed to get auth token: %w", err)
 	}
-
-	// Set the Authorization header
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	// Send the request
 	resp, err := ma.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send check-in request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Check the response status code
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("check-in request failed with status %d: %s", resp.StatusCode, string(body))
@@ -331,27 +330,90 @@ func getClusterVersion(clientset *kubernetes.Clientset) (string, error) {
 	return versionInfo.String(), nil
 }
 
-// getClusterProvider determines the cloud provider based on API groups
-func getClusterProvider(clientset *kubernetes.Clientset) (string, error) {
-	discoveryClient := clientset.Discovery()
-	apiGroups, err := discoveryClient.ServerGroups()
+var eksPattern = regexp.MustCompile(`(?i)eks|aws|amazon`)
+
+func isEKS(clusterVersion string, logger *logrus.Entry) bool {
+	logger.Debugf("Checking if cluster is EKS")
+	return eksPattern.MatchString(clusterVersion)
+}
+
+func isAKS(clientset *kubernetes.Clientset, logger *logrus.Entry) bool {
+	logger.Debugf("Checking if cluster is AKS")
+	var aksAzurePattern = regexp.MustCompile(`(?i)aks|azure`)
+	pods, err := clientset.CoreV1().Pods("").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
-		return "", fmt.Errorf("failed to get API groups: %w", err)
+		return false
 	}
 
-	for _, group := range apiGroups.Groups {
-		if strings.Contains(group.Name, "eks") {
-			return "AWS", nil
-		} else if strings.Contains(group.Name, "aks") {
-			return "AZURE", nil
-		} else if strings.Contains(group.Name, "gke") {
-			return "GCP", nil
-		} else if strings.Contains(group.Name, "alibabacloud") || strings.Contains(group.Name, "ack") {
-			return "ALIBABA", nil
-		} else if strings.Contains(group.Name, "oracle") || strings.Contains(group.Name, "oke") {
-			return "OCI", nil
+	// Create a channel to receive results
+	results := make(chan bool, len(pods.Items))
+
+	// Process each pod in a separate goroutine
+	for _, pod := range pods.Items {
+		go func(pod corev1.Pod) {
+			labels := pod.GetLabels()
+
+			// Fast path check
+			if managedBy, exists := labels["kubernetes.azure.com/managedby"]; exists {
+				if strings.EqualFold(managedBy, "aks") {
+					results <- true
+					return
+				}
+			}
+
+			// Slower path check
+			for key, value := range labels {
+				combined := key + " " + value
+				if aksAzurePattern.MatchString(combined) {
+					results <- true
+					return
+				}
+			}
+
+			results <- false
+		}(pod)
+	}
+
+	// Collect results
+	for range pods.Items {
+		if <-results {
+			return true
 		}
 	}
 
-	return "Unknown", nil
+	return false
+}
+
+func isGKE(clientset *kubernetes.Clientset, logger *logrus.Entry) bool {
+	logger.Debugf("Checking if cluster is GKE")
+	discoveryClient := clientset.Discovery()
+	apiGroups, err := discoveryClient.ServerGroups()
+	if err != nil {
+		return false
+	}
+	for _, group := range apiGroups.Groups {
+		if strings.Contains(group.Name, "gke") {
+			return true
+		}
+	}
+	return false
+}
+
+// getClusterProvider determines the cloud provider based on API groups
+func getClusterProvider(clientset *kubernetes.Clientset, clusterVersion string, logger *logrus.Entry) string {
+	logger.Debugf("Getting Cluster Provider")
+
+	if isEKS(clusterVersion, logger) {
+		logger.Debug("Cluster is EKS")
+		return "AWS"
+	} else if isAKS(clientset, logger) {
+		logger.Debug("Cluster is AKS")
+
+		return "AZURE"
+	} else if isGKE(clientset, logger) {
+		logger.Debug("Cluster is GKE")
+		return "GCP"
+	}
+
+	return "UNKNOWN"
 }

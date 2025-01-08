@@ -47,13 +47,14 @@ func GetVegaAuthToken(
 		return tokenCache.token, nil
 	}
 
+	authURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", cfg.AuthServiceURL, cfg.VegaOrgSlug)
 	logrus.WithFields(logrus.Fields{
 		"function": "GetVegaAuthToken",
 		"clientID": cfg.VegaClientID,
 		"slug":     cfg.VegaOrgSlug,
+		"url":      cfg.AuthServiceURL,
+		"authURL":  authURL,
 	}).Debug("Getting auth token")
-
-	authURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", cfg.AuthServiceURL, cfg.VegaOrgSlug)
 
 	form := url.Values{
 		"grant_type":    {"client_credentials"},

@@ -11,11 +11,13 @@
 APPLICATION = vega-metrics-agent
 DOCKER_IMAGE = public.ecr.aws/c0f8b9o4/vegacloud/${APPLICATION}
 VERSION = $(shell cat pkg/config/VERSION)
-DOCKER_IMAGE_DEV = 513971506177.dkr.ecr.us-west-2.amazonaws.com/${APPLICATION}
+DOCKER_IMAGE_DEV = public.ecr.aws/c0f8b9o4/vegacloud/${APPLICATION}-test
 GOLANG_VERSION ?= 1.23
 
 # Go commands
-GO_BUILD = CGO_ENABLED=0 GOOS=linux go build -o bin/${APPLICATION}
+GO_BUILD = CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/amd64/${APPLICATION}
+GO_BUILD_ARM = CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/arm64/${APPLICATION}
+
 GO_FMT = go fmt ./...
 GO_LINT = golangci-lint run
 GO_SEC = ${HOME}/go/bin/gosec ./...
@@ -23,16 +25,20 @@ GO_TEST = go test ./...
 GO_VET = go vet ./...
 
 # Docker commands
-DOCKER_BUILD = docker build -f Dockerfile \
+DOCKER_BUILD = docker buildx build -f Dockerfile \
 	--build-arg golang_version=${GOLANG_VERSION} \
 	--build-arg app_version=${VERSION} \
+	--platform linux/amd64,linux/arm64 \
 	-t ${DOCKER_IMAGE}:${VERSION} \
-	-t ${DOCKER_IMAGE}:latest .
+	-t ${DOCKER_IMAGE}:latest  \
+        --push .
 
-DOCKER_BUILD_DEV = docker build -f Dockerfile \
+DOCKER_BUILD_DEV = docker buildx build -f Dockerfile \
 	--build-arg golang_version=${GOLANG_VERSION} \
 	--build-arg app_version=${VERSION} \
-	-t ${DOCKER_IMAGE_DEV}:${VERSION} .
+	--platform linux/amd64,linux/arm64 \
+	-t ${DOCKER_IMAGE_DEV}:${VERSION} \
+        --push .
 
 
 # Default target
@@ -84,6 +90,7 @@ build:
 	@echo "Building Go application locally..."
 	mkdir -p bin
 	${GO_BUILD}
+	${GO_BUILD_ARM}
 
 # Build Docker image
 .PHONY: docker-build
@@ -100,14 +107,14 @@ docker-build-dev:
 
 
 # Push Docker image
-.PHONY: docker-push
-docker-push:
-	docker push ${DOCKER_IMAGE}:${VERSION}
-	docker push ${DOCKER_IMAGE}:latest
+#.PHONY: docker-push
+#docker-push:
+#	docker push ${DOCKER_IMAGE}:${VERSION}
+#	docker push ${DOCKER_IMAGE}:latest
 
-.PHONY: docker-push-dev
-docker-push-dev:
-	docker push ${DOCKER_IMAGE_DEV}:${VERSION}
+#.PHONY: docker-push-dev
+#docker-push-dev:
+#	docker push ${DOCKER_IMAGE_DEV}:${VERSION}
 
 # Clean build artifacts
 .PHONY: clean

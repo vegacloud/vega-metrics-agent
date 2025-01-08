@@ -38,6 +38,7 @@ func LoadConfig() (*Config, error) {
 		"SHOULD_AGENT_CHECK_IN": "should_agent_check_in",
 		"METRICS_COLLECTOR_API": "metrics_collector_api",
 		"AUTH_SERVICE_URL":      "auth_service_url",
+		"LOG_LEVEL":             "log_level",
 	}
 
 	for envVar, viperKey := range envVars {
@@ -74,7 +75,6 @@ func LoadConfig() (*Config, error) {
 			return nil, errors.New("missing required config values: client_id, client_secret, org_slug, or cluster_name")
 		}
 	}
-
 	return &cfg, nil
 }
 

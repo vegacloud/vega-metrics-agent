@@ -1,3 +1,4 @@
 # Ignore all Chart.lock files
 **/Chart.lock
 bin/*
+charts/vega-metrics-agent/values-devlocal.yaml
