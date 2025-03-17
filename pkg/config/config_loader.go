@@ -15,13 +15,27 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
-
-	"github.com/vegacloud/kubernetes/metricsagent/pkg/utils"
 )
+
+func IsS3SafeBucketName(bueckt_name string) bool {
+	// We build a regex character class that includes:
+	//   - 0-9, a-z, A-Z for alphanumeric characters
+	//   - !, _ , . , * , ' and ( as safe special characters.
+	// The hyphen (-) is placed at the beginning to avoid confusion with a range.
+	pattern := `^[-0-9A-Za-z!_.*'\(]+$`
+
+	matched, err := regexp.MatchString(pattern, bueckt_name)
+	if err != nil {
+		// In case of a regex error, return false (or handle as needed)
+		return false
+	}
+	return matched
+}
 
 // LoadConfig initializes the configuration from environment variables and command-line flags.
 func LoadConfig() (*Config, error) {
@@ -77,7 +91,7 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// Validate that the cluster name is safe for use in S3 bucket names
-	if !utils.IsSafeBucketName(cfg.VegaClusterName) {
+	if !IsS3SafeBucketName(cfg.VegaClusterName) {
 		return nil, fmt.Errorf("cluster_name '%s' contains invalid characters for S3 bucket names; only alphanumeric characters and the following special characters are allowed: -!_.*'(", cfg.VegaClusterName)
 	}
 
