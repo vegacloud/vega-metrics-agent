@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sync"
 	"time"
 
@@ -38,6 +39,21 @@ type S3Uploader struct {
 	config    *config.Config
 	s3Session *session.Session
 	client    *http.Client // HTTP client for making requests
+}
+
+func IsSafeBucketName(bueckt_name string) bool {
+	// We build a regex character class that includes:
+	//   - 0-9, a-z, A-Z for alphanumeric characters
+	//   - !, _ , . , * , ' and ( as safe special characters.
+	// The hyphen (-) is placed at the beginning to avoid confusion with a range.
+	pattern := `^[-0-9A-Za-z!_.*'\(]+$`
+
+	matched, err := regexp.MatchString(pattern, bueckt_name)
+	if err != nil {
+		// In case of a regex error, return false (or handle as needed)
+		return false
+	}
+	return matched
 }
 
 // NewS3Uploader creates a new S3Uploader instance
