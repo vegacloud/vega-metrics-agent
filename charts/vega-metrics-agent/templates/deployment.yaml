@@ -28,7 +28,7 @@ spec:
         app: metrics-agent
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
-      automountServiceAccountToken: true     
+      automountServiceAccountToken: true
       # Add node selector if provided
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -53,8 +53,8 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: "{{ .Values.image.pullPolicy }}"
           args:
-            - 'kubernetes'          
-          env:          
+            - 'kubernetes'
+          env:
             - name: KUBERNETES_CLIENT_LOG_LEVEL
               value: "8"
             - name: VEGA_CLIENT_ID
@@ -71,17 +71,27 @@ spec:
               value: "{{ .Values.vega.orgSlug }}"
             - name: VEGA_CLUSTER_NAME
               value: "{{ .Values.vega.clusterName }}"
+            # API Rate Limiting Configuration
+            - name: VEGA_QPS
+              value: "{{ .Values.apiRateLimiting.qps }}"
+            - name: VEGA_BURST
+              value: "{{ .Values.apiRateLimiting.burst }}"
+            - name: VEGA_TIMEOUT
+              value: "{{ .Values.apiRateLimiting.timeout }}s"
+            # Advanced Collection Settings
+            - name: VEGA_MAX_CONCURRENCY
+              value: "{{ .Values.maxConcurrency }}"
           {{- range $key, $value := .Values.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
-          {{- end }}       
+          {{- end }}
           resources:
             requests:
               memory: "{{ .Values.resources.requests.memory }}"
               cpu: "{{ .Values.resources.requests.cpu }}"
             limits:
               memory: "{{ .Values.resources.limits.memory }}"
-              cpu: "{{ .Values.resources.limits.cpu }}"          
+              cpu: "{{ .Values.resources.limits.cpu }}"
           securityContext:
             runAsUser: {{ .Values.securityContext.runAsUser }}
             runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}

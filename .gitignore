@@ -2,3 +2,4 @@
 **/Chart.lock
 bin/*
 charts/vega-metrics-agent/values-devlocal.yaml
+charts/vega-metrics-agent/values-*.yaml
