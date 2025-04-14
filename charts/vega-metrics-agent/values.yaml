@@ -26,6 +26,33 @@ securityContext:
   runAsUser: 10000
   runAsNonRoot: true
   allowPrivilegeEscalation: false
+
+# Node selector to constrain pods to specific nodes
+nodeSelector: {}
+  # Example:
+  # disktype: ssd
+  # kubernetes.io/os: linux
+
+# Pod affinity/anti-affinity rules
+affinity: {}
+  # Example:
+  # podAntiAffinity:
+  #   requiredDuringSchedulingIgnoredDuringExecution:
+  #   - labelSelector:
+  #       matchExpressions:
+  #       - key: app
+  #         operator: In
+  #         values:
+  #         - metrics-agent
+  #     topologyKey: kubernetes.io/hostname
+
+# Tolerations allow pods to be scheduled on nodes with matching taints
+tolerations: []
+  # Example:
+  # - key: "example-key"
+  #   operator: "Exists"
+  #   effect: "NoSchedule"
+
 vega:
   clientId: "XXXXX" # Log into your portal and visit settings->Client Registration to obtain this
   clientSecret: "XXXX" # Log into your portal and visit settings->Client Registration to obtain this
