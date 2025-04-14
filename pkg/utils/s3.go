@@ -168,7 +168,7 @@ func (u *S3Uploader) UploadMetrics(ctx context.Context, metrics map[string]inter
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }() // Release the slot when done
 			metricsUpload := MetricsUpload{
-				SchemaVersion: "1.2.0",
+				SchemaVersion: u.config.SchemaVersion,
 				Items:         data,
 			}
 			// Marshal the metrics data to JSON

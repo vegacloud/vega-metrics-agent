@@ -46,27 +46,25 @@ func LoadConfig() (*Config, error) {
 	// Set default values
 	setDefaults()
 
-	if os.Getenv("START_COLLECTION_NOW") == "true" {
-		viper.Set("start_collection_now", true)
+	// Map environment variables to Viper keys
+	envVars := map[string]string{
+		"START_COLLECTION_NOW":  "start_collection_now",
+		"SAVE_LOCAL":            "save_local",
+		"AGENT_ID":              "agent_id",
+		"SHOULD_AGENT_CHECK_IN": "should_agent_check_in",
+		"METRICS_COLLECTOR_API": "metrics_collector_api",
+		"AUTH_SERVICE_URL":      "auth_service_url",
+		"LOG_LEVEL":             "log_level",
 	}
-	if os.Getenv("SAVE_LOCAL") == "true" {
-		viper.Set("save_local", true)
+
+	for envVar, viperKey := range envVars {
+		if value := os.Getenv(envVar); value != "" {
+			viper.Set(viperKey, value)
+		}
 	}
-	if os.Getenv("AGENT_ID") != "" {
-		viper.Set("agent_id", os.Getenv("AGENT_ID"))
-	}
-	if os.Getenv("SHOULD_AGENT_CHECK_IN") != "" {
-		viper.Set("should_agent_check_in", os.Getenv("SHOULD_AGENT_CHECK_IN"))
-	}
-	if os.Getenv("METRICS_COLLECTOR_API") != "" {
-		viper.Set("metrics_collector_api", os.Getenv("METRICS_COLLECTOR_API"))
-	}
-	if os.Getenv("AUTH_SERVICE_URL") != "" {
-		viper.Set("auth_service_url", os.Getenv("AUTH_SERVICE_URL"))
-	}
+
 	// Bind environment variables
-	err := viper.BindEnv("client_id")
-	if err != nil {
+	if err := viper.BindEnv("client_id"); err != nil {
 		return nil, err
 	}
 
@@ -78,23 +76,28 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// Parse poll_interval manually since Viper treats it as a string
-	pollIntervalStr := viper.GetString("poll_interval")
-	pollInterval, err := time.ParseDuration(pollIntervalStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid poll_interval: %v", err)
+	if pollIntervalStr := viper.GetString("poll_interval"); pollIntervalStr != "" {
+		pollInterval, err := time.ParseDuration(pollIntervalStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid poll_interval: %v", err)
+		}
+		cfg.VegaPollInterval = pollInterval
 	}
-	cfg.VegaPollInterval = pollInterval
 
 	// Validate required fields
-	if cfg.VegaClientID == "" || cfg.VegaClientSecret == "" || cfg.VegaOrgSlug == "" || cfg.VegaClusterName == "" {
-		return nil, errors.New("missing required config values: client_id, client_secret, org_slug, or cluster_name")
+	requiredFields := []string{cfg.VegaClientID, cfg.VegaClientSecret, cfg.VegaOrgSlug, cfg.VegaClusterName}
+	for _, field := range requiredFields {
+		if field == "" {
+			return nil, errors.New("missing required config values: client_id, client_secret, org_slug, or cluster_name")
+		}
 	}
+
 
 	// Validate that the cluster name is safe for use in S3 bucket names
 	if !IsS3SafeBucketName(cfg.VegaClusterName) {
 		return nil, fmt.Errorf("cluster_name '%s' contains invalid characters for S3 bucket names; only alphanumeric characters and the following special characters are allowed: -!_.*'(", cfg.VegaClusterName)
 	}
-
+  
 	return &cfg, nil
 }
 
@@ -115,4 +118,9 @@ func setDefaults() {
 	viper.SetDefault("max_concurrency", DefaultMaxConcurrency)
 	viper.SetDefault("agent_id", uuid.New().String())
 	viper.SetDefault("should_agent_check_in", DefaultShouldAgentCheckIn)
+	viper.SetDefault("schema_version", DefaultSchemaVersion)
+	viper.SetDefault("agent_version", DefaultAgentVersion)
+	viper.SetDefault("qps", DefaultQPS)
+	viper.SetDefault("burst", DefaultBurst)
+	viper.SetDefault("timeout", DefaultTimeout)
 }
