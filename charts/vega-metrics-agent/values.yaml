@@ -30,7 +30,7 @@ vega:
   clientId: "XXXXX" # Log into your portal and visit settings->Client Registration to obtain this
   clientSecret: "XXXX" # Log into your portal and visit settings->Client Registration to obtain this
   orgSlug: "XXXX"
-  clusterName: "XXXX"
+  clusterName: "XXXX" # This must be a unique identifier for your cluster. may not contain spaces or special characters. regex: ^[-0-9A-Za-z!_.*'\(]+$
 env:
   # For production, you should be using certificates internal to your cluster. 
   # We put this by default becuase most k8s clusters are not using tls certs internally.

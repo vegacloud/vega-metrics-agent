@@ -36,6 +36,7 @@ import (
 
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/models"
+	"github.com/vegacloud/kubernetes/metricsagent/pkg/utils"
 )
 
 // NodeCollector collects metrics from Kubernetes nodes.
@@ -91,6 +92,45 @@ func (nc *NodeCollector) CollectMetrics(ctx context.Context) (interface{}, error
 
 // Update collectCPUMetrics to use the new method
 func (nc *NodeCollector) collectCPUMetrics(ctx context.Context, node *v1.Node) (models.CPUMetrics, error) {
+	// Try to get metrics using the metrics.k8s.io API first
+	config, err := utils.GetExistingClientConfig()
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to get existing client config for metrics API, falling back to kubelet")
+		return nc.collectCPUMetricsFromKubelet(ctx, node)
+	}
+
+	nodeMetrics, err := utils.GetNodeMetricsFromAPI(ctx, nc.clientset, config.Config, node.Name)
+	if err != nil {
+		logrus.WithError(err).Warnf("Failed to get metrics for node %s from metrics API, falling back to kubelet", node.Name)
+		return nc.collectCPUMetricsFromKubelet(ctx, node)
+	}
+
+	// If we got metrics from the API, parse them
+	if nodeMetrics != nil && nodeMetrics.Usage.Cpu() != nil {
+		cpuUsage := nodeMetrics.Usage.Cpu().MilliValue()
+
+		// Create a CPUMetrics object with the data we have
+		cpuMetrics := models.CPUMetrics{
+			UsageTotal:   uint64(cpuUsage * 1000000), // Convert millicores to nanoseconds
+			PerCoreUsage: make(map[string]uint64),
+		}
+
+		// Log successful retrieval
+		logrus.WithFields(logrus.Fields{
+			"node": node.Name,
+			"cpu":  cpuUsage,
+		}).Debug("Successfully retrieved CPU metrics from metrics.k8s.io API")
+
+		return cpuMetrics, nil
+	}
+
+	// If we couldn't get metrics from the API or they're incomplete, fall back to kubelet
+	logrus.Debugf("No CPU metrics available from metrics API for node %s, falling back to kubelet", node.Name)
+	return nc.collectCPUMetricsFromKubelet(ctx, node)
+}
+
+// Add the fallback method that uses the original kubelet approach
+func (nc *NodeCollector) collectCPUMetricsFromKubelet(ctx context.Context, node *v1.Node) (models.CPUMetrics, error) {
 	metricFamilies, err := FetchMetricsViaKubelet(ctx, nc.clientset, node.Name, "metrics/cadvisor")
 	if err != nil {
 		return models.CPUMetrics{}, err
@@ -98,39 +138,53 @@ func (nc *NodeCollector) collectCPUMetrics(ctx context.Context, node *v1.Node) (
 
 	cpuMetrics := models.CPUMetrics{
 		PerCoreUsage: make(map[string]uint64),
-		Throttling:   models.ThrottlingMetrics{},
 	}
 
-	// Total CPU usage (equivalent to metrics-server CPU usage)
-	if cpuUsage, ok := metricFamilies["container_cpu_usage_seconds_total"]; ok {
-		for _, metric := range cpuUsage.Metric {
-			if metric.Counter != nil {
-				value := metric.Counter.GetValue() * 1e9
-				if value >= 0 {
-					cpuMetrics.UsageTotal = uint64(value)
+	// Process metric families to extract CPU stats
+	if family, ok := metricFamilies["container_cpu_usage_seconds_total"]; ok {
+		for _, metric := range family.Metric {
+			// Get the container from the metric
+			var containerID string
+			var containerName string
+			for _, label := range metric.Label {
+				if label.GetName() == "id" {
+					containerID = label.GetValue()
 				}
+				if label.GetName() == "name" {
+					containerName = label.GetValue()
+				}
+			}
+
+			if containerID == "" || containerName != "/" {
+				continue // Only consider the root container
+			}
+
+			if metric.Counter != nil {
+				// Convert seconds to nanoseconds
+				cpuMetrics.UsageTotal = uint64(metric.Counter.GetValue() * 1e9)
 			}
 		}
 	}
 
-	// Additional detailed CPU metrics
-	if cpuUser, ok := metricFamilies["container_cpu_user_seconds_total"]; ok {
-		for _, metric := range cpuUser.Metric {
-			if metric.Counter != nil {
-				value := metric.Counter.GetValue() * 1e9
-				if value >= 0 {
-					cpuMetrics.UserTime = uint64(value)
+	// Additional processing for per-core metrics
+	if family, ok := metricFamilies["container_cpu_usage_seconds_total"]; ok {
+		for _, metric := range family.Metric {
+			// Check if this is a per-core metric
+			var cpu string
+			var containerName string
+			for _, label := range metric.Label {
+				if label.GetName() == "cpu" {
+					cpu = label.GetValue()
+				}
+				if label.GetName() == "name" {
+					containerName = label.GetValue()
 				}
 			}
-		}
-	}
-
-	if cpuSystem, ok := metricFamilies["container_cpu_system_seconds_total"]; ok {
-		for _, metric := range cpuSystem.Metric {
-			if metric.Counter != nil {
-				value := metric.Counter.GetValue() * 1e9
-				if value >= 0 {
-					cpuMetrics.SystemTime = uint64(value)
+			// Only consider root container and CPU-specific metrics
+			if containerName == "/" && cpu != "" {
+				if metric.Counter != nil {
+					// Convert seconds to nanoseconds
+					cpuMetrics.PerCoreUsage[cpu] = uint64(metric.Counter.GetValue() * 1e9)
 				}
 			}
 		}

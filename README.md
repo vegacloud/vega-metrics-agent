@@ -116,7 +116,7 @@ This displays help for available flags, such as:
 
 ### Health Check
 
-You can check the agent’s health by accessing the ```/health``` endpoint:
+You can check the agent's health by accessing the ```/health``` endpoint:
 
 ### Networking and System Requirements
 
@@ -153,6 +153,55 @@ This project is licensed under the Business Source License (BSL) 1.1. After the 
 - Enterprise Customers: Support for the Vega Kubernetes Metrics Agent is available through the [Vega Cloud Support Portal](https://support.vegacloud.io/).
 - Communnity and General Public support: Support is best effort. Please file an issue, bug report, or feature request using the [GitHub Issues](
     https://github.com/vegacloud/vega-metrics-agent/issues).
+
+## Recent Changes
+
+### Metrics Collection Enhancement
+
+The Metrics Agent now supports collecting CPU metrics via the `metrics.k8s.io` API. This change provides the following benefits:
+
+1. **Improved Reliability**: The agent can now retrieve metrics directly from the metrics-server instead of requiring access to the kubelet API on each node.
+
+2. **Better Security**: The agent no longer needs to access the kubelet API directly, reducing the security permissions required.
+
+3. **Fallback Mechanism**: If metrics-server data is unavailable, the agent will automatically fall back to the traditional kubelet-based collection method.
+
+### Technical Implementation Details
+
+- The agent first attempts to fetch metrics from the metrics.k8s.io API
+- If that fails or returns incomplete data, it falls back to the kubelet method
+- Both node and pod CPU metric collection have been updated to use this approach
+- Detailed logs are provided to show which method was used for collection
+
+## Requirements
+
+- Kubernetes cluster with metrics-server installed (recommended)
+- Service account with appropriate RBAC permissions
+
+## Configuration
+
+No additional configuration is needed to use the metrics.k8s.io API - the agent will automatically detect and use it if available.
+
+## Troubleshooting
+
+If you encounter issues with CPU metrics:
+
+1. Verify that the metrics-server is installed and running in your cluster:
+   ```
+   kubectl get pods -n kube-system | grep metrics-server
+   ```
+
+2. Check that the metrics API is available:
+   ```
+   kubectl get apiservices | grep metrics
+   ```
+
+3. Test direct access to the metrics API:
+   ```
+   kubectl get --raw /apis/metrics.k8s.io/v1beta1/nodes
+   ```
+
+4. Check the agent logs for any connection errors
 
 
 
