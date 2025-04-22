@@ -310,7 +310,11 @@ func (ma *MetricsAgent) Checkin(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to send check-in request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			logrus.WithError(err).Warn("Failed to close response body in agent Checkin")
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

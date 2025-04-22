@@ -57,9 +57,9 @@ func GetVegaAuthToken(
 	}).Debug("Getting auth token")
 
 	form := url.Values{
-		"grant_type":    {"client_credentials"},
-		"client_id":     {cfg.VegaClientID},
-		"client_secret": {cfg.VegaClientSecret},
+		"grant_type":    []string{"client_credentials"},
+		"client_id":     []string{cfg.VegaClientID},
+		"client_secret": []string{cfg.VegaClientSecret},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, authURL, strings.NewReader(form.Encode()))
@@ -88,7 +88,11 @@ func GetVegaAuthToken(
 		}
 
 		// Ensure response body is closed
-		defer resp.Body.Close()
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				logrus.WithError(err).Warn("Failed to close response body")
+			}
+		}()
 
 		// Handle non-2xx status codes
 		if resp.StatusCode < 200 || resp.StatusCode > 299 {

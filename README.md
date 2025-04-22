@@ -153,7 +153,7 @@ helm install vega-metrics-agent ./charts/vega-metrics-agent -f custom-values.yam
 | `resources.limits.cpu` | CPU limit for the agent | "1000m" |
 | `replicaCount` | Number of agent replicas to run | 1 |
 | `image.repository` | Agent container image repository | public.ecr.aws/c0f8b9o4/vegacloud/vega-metrics-agent |
-| `image.tag` | Agent container image tag | 1.1.3 |
+| `image.tag` | Agent container image tag | 1.1.4 |
 | `image.pullPolicy` | Container image pull policy | Always |
 
 **Note**: If you do not specify the API rate limiting or concurrency parameters, the agent will use its built-in defaults, which are optimized for most use cases.

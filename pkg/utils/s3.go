@@ -87,7 +87,11 @@ func (u *S3Uploader) getPresignedURL(ctx context.Context, clusterName, filename 
 		return "", fmt.Errorf("getPresignedURL: error making request: %w", err)
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			logrus.WithError(err).Warn("Failed to close response body in getPresignedURL")
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("getPresignedURL: API returned non-200 status: %d", resp.StatusCode)
@@ -130,7 +134,11 @@ func (u *S3Uploader) uploadToS3(ctx context.Context, presignedURL string, data [
 			time.Sleep(2 * time.Second) // Backoff before retrying
 			continue
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				logrus.WithError(err).Warn("Failed to close response body in uploadToS3")
+			}
+		}()
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)

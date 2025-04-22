@@ -72,15 +72,25 @@ spec:
             - name: VEGA_CLUSTER_NAME
               value: "{{ .Values.vega.clusterName }}"
             # API Rate Limiting Configuration
+            {{- if hasKey .Values "apiRateLimiting" }}
+            {{- if hasKey .Values.apiRateLimiting "qps" }}
             - name: VEGA_QPS
               value: "{{ .Values.apiRateLimiting.qps }}"
+            {{- end }}
+            {{- if hasKey .Values.apiRateLimiting "burst" }}
             - name: VEGA_BURST
               value: "{{ .Values.apiRateLimiting.burst }}"
+            {{- end }}
+            {{- if hasKey .Values.apiRateLimiting "timeout" }}
             - name: VEGA_TIMEOUT
               value: "{{ .Values.apiRateLimiting.timeout }}s"
+            {{- end }}
+            {{- end }}
             # Advanced Collection Settings
+            {{- if hasKey .Values "maxConcurrency" }}
             - name: VEGA_MAX_CONCURRENCY
               value: "{{ .Values.maxConcurrency }}"
+            {{- end }}
           {{- range $key, $value := .Values.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

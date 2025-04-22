@@ -111,7 +111,13 @@ func (nc *NodeCollector) collectCPUMetrics(ctx context.Context, node *v1.Node) (
 
 		// Create a CPUMetrics object with the data we have
 		cpuMetrics := models.CPUMetrics{
-			UsageTotal:   uint64(cpuUsage * 1000000), // Convert millicores to nanoseconds
+			UsageTotal: func() uint64 {
+				val := cpuUsage * 1000000 // Convert millicores to nanoseconds
+				if val < 0 {
+					return 0
+				}
+				return uint64(val)
+			}(),
 			PerCoreUsage: make(map[string]uint64),
 		}
 

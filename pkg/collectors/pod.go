@@ -367,12 +367,30 @@ func (pc *PodCollector) getPodMetrics(ctx context.Context, pod *v1.Pod) (*models
 				}
 
 				// Set CPU usage field
-				containerMetric.CPU.UsageTotal = uint64(container.Usage.Cpu().MilliValue() * 1000000)
+				containerMetric.CPU.UsageTotal = func() uint64 {
+					val := container.Usage.Cpu().MilliValue() * 1000000
+					if val < 0 {
+						return 0
+					}
+					return uint64(val)
+				}()
 
 				// Set memory metrics
 				containerMetric.Memory = models.MemoryMetrics{
-					Used:       uint64(container.Usage.Memory().Value()),
-					WorkingSet: uint64(container.Usage.Memory().Value()),
+					Used: func() uint64 {
+						val := container.Usage.Memory().Value()
+						if val < 0 {
+							return 0
+						}
+						return uint64(val)
+					}(),
+					WorkingSet: func() uint64 {
+						val := container.Usage.Memory().Value()
+						if val < 0 {
+							return 0
+						}
+						return uint64(val)
+					}(),
 				}
 
 				metrics.Containers = append(metrics.Containers, containerMetric)
@@ -452,7 +470,11 @@ func (pc *PodCollector) getPodMetrics(ctx context.Context, pod *v1.Pod) (*models
 			logrus.Warnf("Failed to get metrics from kubelet for pod %s/%s: %v", pod.Namespace, pod.Name, err)
 			return metrics, nil
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				logrus.WithError(err).Warnf("Failed to close response body for pod %s/%s", pod.Namespace, pod.Name)
+			}
+		}()
 
 		// Parse metrics
 		var parser expfmt.TextParser
