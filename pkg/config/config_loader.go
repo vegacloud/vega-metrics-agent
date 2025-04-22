@@ -92,12 +92,11 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 
-
 	// Validate that the cluster name is safe for use in S3 bucket names
 	if !IsS3SafeBucketName(cfg.VegaClusterName) {
 		return nil, fmt.Errorf("cluster_name '%s' contains invalid characters for S3 bucket names; only alphanumeric characters and the following special characters are allowed: -!_.*'(", cfg.VegaClusterName)
 	}
-  
+
 	return &cfg, nil
 }
 

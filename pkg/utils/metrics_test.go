@@ -47,12 +47,14 @@ func TestNodeAndPodMetricsFromAPI(t *testing.T) {
 		if err != nil {
 			// We expect this to fail in tests since we don't have real clients
 			// but we're only checking method signatures
+			_ = err
 		}
 
 		// Test GetPodMetricsFromAPI
 		_, err = GetPodMetricsFromAPI(ctx, clientset, config, "default", "test-pod")
 		if err != nil {
 			// Similarly, this would fail but we're checking signatures
+			_ = err
 		}
 	}
 }
