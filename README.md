@@ -139,10 +139,79 @@ Then install using:
 helm install vega-metrics-agent ./charts/vega-metrics-agent -f custom-values.yaml
 ```
 
+#### Configuring Scheduling Constraints
+
+You can control where the agent pods are scheduled using `nodeSelector`, `affinity`, and `tolerations`.
+
+**Using `nodeSelector`:**
+
+To schedule the agent only on nodes with specific labels (e.g., `disktype=ssd`):
+
+```sh
+helm install vega-metrics-agent ./charts/vega-metrics-agent \
+  --set vega.clientId=YOUR_CLIENT_ID \
+  --set vega.clientSecret=YOUR_CLIENT_SECRET \
+  --set vega.orgSlug=YOUR_ORG_SLUG \
+  --set vega.clusterName=YOUR_CLUSTER_NAME \
+  --set nodeSelector.disktype=ssd
+```
+
+**Using `affinity`:**
+
+Affinity rules provide more advanced scheduling control. For complex affinity rules, it's recommended to use a custom values file. Here's an example snippet for `custom-values.yaml`:
+
+```yaml
+# custom-values.yaml
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+    - labelSelector:
+        matchExpressions:
+        - key: app
+          operator: In
+          values:
+          - metrics-agent
+      topologyKey: "kubernetes.io/hostname"
+```
+
+**Using `tolerations`:**
+
+To allow the agent pods to be scheduled on nodes with specific taints:
+
+```sh
+helm install vega-metrics-agent ./charts/vega-metrics-agent \
+  --set vega.clientId=YOUR_CLIENT_ID \
+  --set vega.clientSecret=YOUR_CLIENT_SECRET \
+  --set vega.orgSlug=YOUR_ORG_SLUG \
+  --set vega.clusterName=YOUR_CLUSTER_NAME \
+  --set tolerations[0].key="example-key" \
+  --set tolerations[0].operator="Exists" \
+  --set tolerations[0].effect="NoSchedule"
+```
+
+For multiple or complex tolerations, using a custom values file is cleaner:
+
+```yaml
+# custom-values.yaml
+tolerations:
+  - key: "key1"
+    operator: "Equal"
+    value: "value1"
+    effect: "NoSchedule"
+  - key: "key2"
+    operator: "Exists"
+    effect: "NoExecute"
+    tolerationSeconds: 3600
+```
+
 #### Helm Chart Parameters
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
+| `vega.clientId` | Client ID for authentication with Vega Cloud API | Required |
+| `vega.clientSecret` | Client Secret for authentication with Vega Cloud API | Required |
+| `vega.orgSlug` | Your Vega Cloud Organization slug | Required |
+| `vega.clusterName` | Unique name for your Kubernetes cluster | Required |
 | `apiRateLimiting.qps` | Kubernetes API requests per second | 100 |
 | `apiRateLimiting.burst` | Maximum burst of API requests allowed | 100 |
 | `apiRateLimiting.timeout` | API request timeout in seconds | 10 |
@@ -155,8 +224,12 @@ helm install vega-metrics-agent ./charts/vega-metrics-agent -f custom-values.yam
 | `image.repository` | Agent container image repository | public.ecr.aws/c0f8b9o4/vegacloud/vega-metrics-agent |
 | `image.tag` | Agent container image tag | 1.1.4 |
 | `image.pullPolicy` | Container image pull policy | Always |
+| `nodeSelector` | Node labels for pod assignment | `{}` |
+| `affinity` | Pod affinity/anti-affinity rules | `{}` |
+| `tolerations` | Pod tolerations for scheduling | `[]` |
+| `env` | Additional environment variables to set in the container | `{}` |
 
-**Note**: If you do not specify the API rate limiting or concurrency parameters, the agent will use its built-in defaults, which are optimized for most use cases.
+**Note**: If you do not specify the API rate limiting or concurrency parameters, the agent will use its built-in defaults, which are optimized for most use cases. For complex configurations like `affinity` and `tolerations`, using a custom values file (`-f values.yaml`) is recommended over multiple `--set` flags.
 
 ### Configuration
 
