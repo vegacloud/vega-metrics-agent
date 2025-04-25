@@ -29,6 +29,7 @@ import (
 
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/config"
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/models"
+	"github.com/vegacloud/kubernetes/metricsagent/pkg/utils"
 )
 
 // PodCollector collects metrics for all pods in the cluster
@@ -122,6 +123,9 @@ func (pc *PodCollector) collectSinglePodMetrics(ctx context.Context, pod v1.Pod)
 		NominatedNodeName: pod.Status.NominatedNodeName,
 	}
 
+	// Set QoSClass in the nested PodMetrics object
+	metrics.PodMetrics.QoSClass = string(pod.Status.QOSClass)
+
 	// Collect Pod IPs
 	podIPs := make([]string, 0, len(pod.Status.PodIPs))
 	for _, ip := range pod.Status.PodIPs {
@@ -160,6 +164,9 @@ func (pc *PodCollector) collectSinglePodMetrics(ctx context.Context, pod v1.Pod)
 		}
 	}
 
+	// Copy conditions to the nested PodMetrics object
+	metrics.PodMetrics.Conditions = metrics.Conditions
+
 	// Collect Resource Metrics
 	for _, container := range pod.Spec.Containers {
 		metrics.Requests.CPU += container.Resources.Requests.Cpu().MilliValue()
@@ -168,13 +175,35 @@ func (pc *PodCollector) collectSinglePodMetrics(ctx context.Context, pod v1.Pod)
 		metrics.Limits.Memory += container.Resources.Limits.Memory().Value()
 	}
 
+	// Copy resource metrics to the nested PodMetrics object
+	metrics.PodMetrics.Requests = metrics.Requests
+	metrics.PodMetrics.Limits = metrics.Limits
+
 	// Get Pod Metrics from Kubelet
 	podMetrics, err := pc.getPodMetrics(ctx, &pod)
 	if err != nil {
 		return metrics, fmt.Errorf("failed to get pod metrics: %w", err)
 	}
 
+	// Save our current resource values that we want to preserve
+	savedRequests := metrics.PodMetrics.Requests
+	savedLimits := metrics.PodMetrics.Limits
+	savedQoSClass := metrics.PodMetrics.QoSClass
+	savedConditions := metrics.PodMetrics.Conditions
+
+	// Update metrics.PodMetrics with the data from podMetrics
+	metrics.PodMetrics = *podMetrics
+
+	// Restore the important resource values we want to preserve
+	// These values are more accurate than what might be in podMetrics
+	metrics.PodMetrics.Requests = savedRequests
+	metrics.PodMetrics.Limits = savedLimits
+	metrics.PodMetrics.QoSClass = savedQoSClass
+	metrics.PodMetrics.Conditions = savedConditions
+
+	// Extract containers from the pod metrics
 	metrics.Containers = pc.extractContainerMetrics(pod, podMetrics)
+
 	metrics.TotalRestarts = pc.getTotalRestarts(pod)
 
 	// Set completion time for completed pods
@@ -269,123 +298,233 @@ func (pc *PodCollector) collectSinglePodMetrics(ctx context.Context, pod v1.Pod)
 }
 
 func (pc *PodCollector) getPodMetrics(ctx context.Context, pod *v1.Pod) (*models.PodMetrics, error) {
-	// Initialize empty metrics structure
+	// Initialize metrics structure with the pod's basic info and resource data
 	metrics := &models.PodMetrics{
 		Name:       pod.Name,
 		Namespace:  pod.Namespace,
+		Phase:      string(pod.Status.Phase),
+		Labels:     pod.Labels,
+		QoSClass:   string(pod.Status.QOSClass),
 		Usage:      models.ResourceMetrics{},
 		Containers: make([]models.ContainerMetrics, 0),
 	}
 
-	// Skip metrics collection if pod is not running on a node
-	if pod.Spec.NodeName == "" {
-		logrus.Debugf("Pod %s/%s is not scheduled on any node, skipping metrics collection", pod.Namespace, pod.Name)
-		return metrics, nil
-	}
-
-	// Get node internal IP where the pod is running
-	node, err := pc.clientset.CoreV1().Nodes().Get(ctx, pod.Spec.NodeName, metav1.GetOptions{})
-	if err != nil {
-		logrus.Warnf("Failed to get node info for pod %s/%s: %v", pod.Namespace, pod.Name, err)
-		return metrics, nil
-	}
-
-	var nodeAddress string
-	for _, addr := range node.Status.Addresses {
-		if addr.Type == v1.NodeInternalIP {
-			nodeAddress = addr.Address
-			break
+	// Set conditions from the pod status
+	for _, condition := range pod.Status.Conditions {
+		switch condition.Type {
+		case v1.PodScheduled:
+			metrics.Conditions.PodScheduled = condition.Status == v1.ConditionTrue
+		case v1.PodInitialized:
+			metrics.Conditions.Initialized = condition.Status == v1.ConditionTrue
+		case v1.ContainersReady:
+			metrics.Conditions.ContainersReady = condition.Status == v1.ConditionTrue
+		case v1.PodReady:
+			metrics.Conditions.Ready = condition.Status == v1.ConditionTrue
 		}
 	}
 
-	if nodeAddress == "" {
-		logrus.Warnf("No internal IP found for node %s", pod.Spec.NodeName)
-		return metrics, nil
+	// Calculate resource requests and limits
+	for _, container := range pod.Spec.Containers {
+		metrics.Requests.CPU += container.Resources.Requests.Cpu().MilliValue()
+		metrics.Requests.Memory += container.Resources.Requests.Memory().Value()
+		metrics.Limits.CPU += container.Resources.Limits.Cpu().MilliValue()
+		metrics.Limits.Memory += container.Resources.Limits.Memory().Value()
 	}
 
-	// Ensure HTTP client exists
-	if pc.httpClient == nil {
-		logrus.Warn("HTTP client not initialized, creating default client")
-		pc.httpClient = &http.Client{
-			Timeout:   time.Second * 10,
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: pc.config.VegaInsecure}}, // #nosec G402
-		}
-	}
+	// First, try to get metrics using the metrics.k8s.io API
+	config, err := utils.GetExistingClientConfig()
+	var gotUsageMetrics bool
 
-	// Construct URL for kubelet metrics
-	metricsURL := fmt.Sprintf("https://%s:10250/metrics/resource", nodeAddress)
+	if err == nil {
+		// Try the direct metrics API call
+		apiMetrics, apiErr := utils.GetPodMetricsFromAPI(ctx, pc.clientset, config.Config, pod.Namespace, pod.Name)
+		if apiErr == nil && apiMetrics != nil && len(apiMetrics.Containers) > 0 {
+			logrus.Debugf("Successfully retrieved pod metrics from metrics.k8s.io API for %s/%s", pod.Namespace, pod.Name)
 
-	// Create request
-	req, err := http.NewRequestWithContext(ctx, "GET", metricsURL, nil)
-	if err != nil {
-		logrus.Warnf("Failed to create request for pod %s/%s: %v", pod.Namespace, pod.Name, err)
-		return metrics, nil
-	}
+			// Reset CPU and memory usage values to ensure clean counting
+			metrics.Usage.CPU = 0
+			metrics.Usage.Memory = 0
 
-	// Get bearer token from service account
-	token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
-	if err != nil {
-		logrus.Warnf("Failed to read service account token: %v", err)
-		return metrics, nil
-	}
-	req.Header.Set("Authorization", "Bearer "+string(token))
+			// Extract usage data from API metrics
+			for _, container := range apiMetrics.Containers {
+				if container.Usage.Cpu() != nil {
+					cpuMilliValue := container.Usage.Cpu().MilliValue()
+					metrics.Usage.CPU += cpuMilliValue
+					logrus.Debugf("Container %s CPU usage: %d millicores", container.Name, cpuMilliValue)
+				}
 
-	// Make request
-	resp, err := pc.httpClient.Do(req)
-	if err != nil {
-		logrus.Warnf("Failed to get metrics from kubelet for pod %s/%s: %v", pod.Namespace, pod.Name, err)
-		return metrics, nil
-	}
-	defer resp.Body.Close()
+				if container.Usage.Memory() != nil {
+					memoryValue := container.Usage.Memory().Value()
+					metrics.Usage.Memory += memoryValue
+					logrus.Debugf("Container %s Memory usage: %d bytes", container.Name, memoryValue)
+				}
 
-	// Parse metrics
-	var parser expfmt.TextParser
-	metricFamilies, err := parser.TextToMetricFamilies(resp.Body)
-	if err != nil {
-		logrus.Warnf("Failed to parse metrics for pod %s/%s: %v", pod.Namespace, pod.Name, err)
-		return metrics, nil
-	}
+				// Create a container metrics entry
+				containerMetric := models.ContainerMetrics{
+					Name:       container.Name,
+					UsageNanos: container.Usage.Cpu().MilliValue() * 1000000, // Convert millicores to nanoseconds
+					UsageBytes: container.Usage.Memory().Value(),
+				}
 
-	containerMetrics := make(map[string]*models.ContainerMetrics)
+				// Set CPU usage field
+				containerMetric.CPU.UsageTotal = func() uint64 {
+					val := container.Usage.Cpu().MilliValue() * 1000000
+					if val < 0 {
+						return 0
+					}
+					return uint64(val)
+				}()
 
-	// Parse container metrics for the pod
-	for _, family := range metricFamilies {
-		for _, metric := range family.Metric {
-			labels := make(map[string]string)
-			for _, label := range metric.Label {
-				labels[*label.Name] = *label.Value
+				// Set memory metrics
+				containerMetric.Memory = models.MemoryMetrics{
+					Used: func() uint64 {
+						val := container.Usage.Memory().Value()
+						if val < 0 {
+							return 0
+						}
+						return uint64(val)
+					}(),
+					WorkingSet: func() uint64 {
+						val := container.Usage.Memory().Value()
+						if val < 0 {
+							return 0
+						}
+						return uint64(val)
+					}(),
+				}
+
+				metrics.Containers = append(metrics.Containers, containerMetric)
 			}
 
-			// Match metrics for this specific pod
-			if labels["pod"] == pod.Name && labels["namespace"] == pod.Namespace {
-				containerName := labels["container"]
+			// If we've successfully retrieved metrics from the API, mark as successful
+			if metrics.Usage.CPU > 0 || metrics.Usage.Memory > 0 {
+				logrus.Infof("Got valid usage metrics from metrics.k8s.io API for pod %s/%s: CPU=%d Memory=%d",
+					pod.Namespace, pod.Name, metrics.Usage.CPU, metrics.Usage.Memory)
+				gotUsageMetrics = true
+			}
+		} else {
+			logrus.Debugf("Could not get pod metrics from metrics.k8s.io API for %s/%s: %v", pod.Namespace, pod.Name, apiErr)
+		}
+	}
 
-				// Initialize container metrics if not exists
-				if _, exists := containerMetrics[containerName]; !exists {
-					containerMetrics[containerName] = &models.ContainerMetrics{
-						Name: containerName,
+	// If the metrics.k8s.io API fails or returns empty data, fall back to kubelet metrics
+	if !gotUsageMetrics {
+		logrus.Debugf("Falling back to kubelet metrics for pod %s/%s", pod.Namespace, pod.Name)
+
+		// Skip metrics collection if pod is not running on a node
+		if pod.Spec.NodeName == "" {
+			logrus.Debugf("Pod %s/%s is not scheduled on any node, skipping metrics collection", pod.Namespace, pod.Name)
+			return metrics, nil
+		}
+
+		// Get node internal IP where the pod is running
+		node, err := pc.clientset.CoreV1().Nodes().Get(ctx, pod.Spec.NodeName, metav1.GetOptions{})
+		if err != nil {
+			logrus.Warnf("Failed to get node info for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+			return metrics, nil
+		}
+
+		var nodeAddress string
+		for _, addr := range node.Status.Addresses {
+			if addr.Type == v1.NodeInternalIP {
+				nodeAddress = addr.Address
+				break
+			}
+		}
+
+		if nodeAddress == "" {
+			logrus.Warnf("No internal IP found for node %s", pod.Spec.NodeName)
+			return metrics, nil
+		}
+
+		// Ensure HTTP client exists
+		if pc.httpClient == nil {
+			logrus.Warn("HTTP client not initialized, creating default client")
+			pc.httpClient = &http.Client{
+				Timeout:   time.Second * 10,
+				Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: pc.config.VegaInsecure}}, // #nosec G402
+			}
+		}
+
+		// Construct URL for kubelet metrics
+		metricsURL := fmt.Sprintf("https://%s:10250/metrics/resource", nodeAddress)
+
+		// Create request
+		req, err := http.NewRequestWithContext(ctx, "GET", metricsURL, nil)
+		if err != nil {
+			logrus.Warnf("Failed to create request for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+			return metrics, nil
+		}
+
+		// Get bearer token from service account
+		token, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+		if err != nil {
+			logrus.Warnf("Failed to read service account token: %v", err)
+			return metrics, nil
+		}
+		req.Header.Set("Authorization", "Bearer "+string(token))
+
+		// Make request
+		resp, err := pc.httpClient.Do(req)
+		if err != nil {
+			logrus.Warnf("Failed to get metrics from kubelet for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+			return metrics, nil
+		}
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				logrus.WithError(err).Warnf("Failed to close response body for pod %s/%s", pod.Namespace, pod.Name)
+			}
+		}()
+
+		// Parse metrics
+		var parser expfmt.TextParser
+		metricFamilies, err := parser.TextToMetricFamilies(resp.Body)
+		if err != nil {
+			logrus.Warnf("Failed to parse metrics for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+			return metrics, nil
+		}
+
+		containerMetrics := make(map[string]*models.ContainerMetrics)
+
+		// Parse container metrics for the pod
+		for _, family := range metricFamilies {
+			for _, metric := range family.Metric {
+				labels := make(map[string]string)
+				for _, label := range metric.Label {
+					labels[*label.Name] = *label.Value
+				}
+
+				// Match metrics for this specific pod
+				if labels["pod"] == pod.Name && labels["namespace"] == pod.Namespace {
+					containerName := labels["container"]
+
+					// Initialize container metrics if not exists
+					if _, exists := containerMetrics[containerName]; !exists {
+						containerMetrics[containerName] = &models.ContainerMetrics{
+							Name: containerName,
+						}
+					}
+
+					// Update container metrics based on metric type
+					switch family.GetName() {
+					case "container_cpu_usage_seconds_total":
+						value := int64(*metric.Counter.Value * 1000) // Convert to millicores
+						containerMetrics[containerName].UsageNanos = value
+						metrics.Usage.CPU += value
+					case "container_memory_working_set_bytes":
+						value := int64(*metric.Gauge.Value)
+						containerMetrics[containerName].UsageBytes = value
+						containerMetrics[containerName].Memory.WorkingSet = uint64(*metric.Gauge.Value)
+						metrics.Usage.Memory += value
 					}
 				}
-
-				// Update container metrics based on metric type
-				switch family.GetName() {
-				case "container_cpu_usage_seconds_total":
-					value := int64(*metric.Counter.Value * 1000) // Convert to millicores
-					containerMetrics[containerName].UsageNanos = value
-					metrics.Usage.CPU += value
-				case "container_memory_working_set_bytes":
-					value := int64(*metric.Gauge.Value)
-					containerMetrics[containerName].UsageBytes = value
-					metrics.Usage.Memory += value
-					containerMetrics[containerName].Memory.WorkingSet = uint64(*metric.Gauge.Value)
-				}
 			}
 		}
-	}
 
-	// Convert map to slice
-	for _, cm := range containerMetrics {
-		metrics.Containers = append(metrics.Containers, *cm)
+		// Convert map to slice
+		for _, cm := range containerMetrics {
+			metrics.Containers = append(metrics.Containers, *cm)
+		}
 	}
 
 	return metrics, nil

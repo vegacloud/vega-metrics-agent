@@ -15,7 +15,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"runtime/debug"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
@@ -67,6 +69,94 @@ func (cc *ClusterCollector) CollectMetrics(ctx context.Context) (interface{}, er
 	return metrics, nil
 }
 
+var eksPattern = regexp.MustCompile(`(?i)eks|aws|amazon`)
+
+func isEKS(clusterVersion string, logger *logrus.Entry) bool {
+	logger.Debugf("Checking if cluster is EKS")
+	return eksPattern.MatchString(clusterVersion)
+}
+
+func isAKS(clientset *kubernetes.Clientset, logger *logrus.Entry) bool {
+	logger.Debugf("Checking if cluster is AKS")
+	var aksAzurePattern = regexp.MustCompile(`(?i)aks|azure`)
+	pods, err := clientset.CoreV1().Pods("").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return false
+	}
+
+	// Create a channel to receive results
+	results := make(chan bool, len(pods.Items))
+
+	// Process each pod in a separate goroutine
+	for _, pod := range pods.Items {
+		go func(pod v1.Pod) {
+			labels := pod.GetLabels()
+
+			// Fast path check
+			if managedBy, exists := labels["kubernetes.azure.com/managedby"]; exists {
+				if strings.EqualFold(managedBy, "aks") {
+					results <- true
+					return
+				}
+			}
+
+			// Slower path check
+			for key, value := range labels {
+				combined := key + " " + value
+				if aksAzurePattern.MatchString(combined) {
+					results <- true
+					return
+				}
+			}
+
+			results <- false
+		}(pod)
+	}
+
+	// Collect results
+	for range pods.Items {
+		if <-results {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isGKE(clientset *kubernetes.Clientset, logger *logrus.Entry) bool {
+	logger.Debugf("Checking if cluster is GKE")
+	discoveryClient := clientset.Discovery()
+	apiGroups, err := discoveryClient.ServerGroups()
+	if err != nil {
+		return false
+	}
+	for _, group := range apiGroups.Groups {
+		if strings.Contains(group.Name, "gke") {
+			return true
+		}
+	}
+	return false
+}
+
+// getClusterProvider determines the cloud provider based on API groups
+func getClusterProvider(clientset *kubernetes.Clientset, clusterVersion string, logger *logrus.Entry) string {
+	logger.Debugf("Getting Cluster Provider")
+
+	if isEKS(clusterVersion, logger) {
+		logger.Debug("Cluster is EKS")
+		return "AWS"
+	} else if isAKS(clientset, logger) {
+		logger.Debug("Cluster is AKS")
+
+		return "AZURE"
+	} else if isGKE(clientset, logger) {
+		logger.Debug("Cluster is GKE")
+		return "GCP"
+	}
+
+	return "UNKNOWN"
+}
+
 // CollectClusterMetrics collects cluster-wide metrics
 func (cc *ClusterCollector) CollectClusterMetrics(ctx context.Context) ([]models.ClusterMetrics, error) {
 	logger := logrus.WithField("collector", "ClusterCollector")
@@ -85,6 +175,8 @@ func (cc *ClusterCollector) CollectClusterMetrics(ctx context.Context) ([]models
 		return nil, fmt.Errorf("failed to get server version: %w", err)
 	}
 	clusterVersion := version.String()
+	clusterProvider := getClusterProvider(cc.clientset, clusterVersion, logger)
+
 	nodes, err := cc.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list nodes: %w", err)
@@ -99,6 +191,7 @@ func (cc *ClusterCollector) CollectClusterMetrics(ctx context.Context) ([]models
 	var metrics []models.ClusterMetrics
 	clusterMetrics := models.ClusterMetrics{
 		KubernetesVersion: clusterVersion,
+		ClusterProvider:   clusterProvider,
 		NodeCount:         len(nodes.Items),
 		PodCount:          len(pods.Items),
 		ContainerCount:    cc.countContainers(pods.Items),

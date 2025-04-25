@@ -1,0 +1,257 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: AWS CloudFormation template to create a production-ready EKS
+  cluster with enhanced security and monitoring.
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: eks-cluster
+    Description: Name of the EKS cluster
+
+  Environment:
+    Type: String
+    Default: development
+    AllowedValues:
+      - development
+      - staging
+      - production
+    Description: Environment type for the cluster
+
+  KubernetesVersion:
+    Type: String
+    Default: "1.30"
+    AllowedValues:
+      - "1.28"
+      - "1.29"
+      - "1.30"
+    Description: Kubernetes version for the cluster
+
+  NodeInstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues:
+      - t3.medium
+      - t3.large
+      - t3.xlarge
+    Description: EC2 instance type for the worker nodes
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the worker nodes
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID for the EKS cluster
+    Default: "vpc-0c92e063ef953b289"
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnet IDs for the EKS cluster nodes
+
+  NodeDiskSize:
+    Type: Number
+    Default: 50
+    MinValue: 20
+    MaxValue: 100
+    Description: Size of the node's EBS volume in GiB
+
+  EnableClusterLogging:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Enable CloudWatch logging for the EKS cluster
+
+Conditions:
+  EnableLogging: !Equals
+    - !Ref EnableClusterLogging
+    - "true"
+
+Resources:
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Ref ClusterName
+      Version: !Ref KubernetesVersion
+      RoleArn: !GetAtt EKSClusterRole.Arn
+      ResourcesVpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds:
+          - !Ref ClusterSecurityGroup
+        EndpointPrivateAccess: true
+        EndpointPublicAccess: true
+      Tags:
+        - Key: !Sub kubernetes.io/cluster/${ClusterName}
+          Value: owned
+        - Key: Environment
+          Value: !Ref Environment
+      Logging:
+        ClusterLogging:
+          EnabledTypes:
+            - !If
+              - EnableLogging
+              - Type: api
+              - !Ref AWS::NoValue
+            - !If
+              - EnableLogging
+              - Type: audit
+              - !Ref AWS::NoValue
+
+  ClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EKS cluster
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-cluster-sg
+
+  NodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EKS worker nodes
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.0.0.0/8
+        # Allow inbound traffic from the cluster security group
+        - IpProtocol: tcp
+          FromPort: 1025
+          ToPort: 65535
+          SourceSecurityGroupId: !Ref ClusterSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-node-sg
+        - Key: !Sub kubernetes.io/cluster/${ClusterName}
+          Value: owned
+
+  # Allow nodes to communicate with each other
+  NodeSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow nodes to communicate with each other
+      GroupId: !Ref NodeSecurityGroup
+      SourceSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: -1
+
+  # Allow worker nodes to communicate with control plane
+  ClusterSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow worker nodes to communicate with control plane
+      GroupId: !Ref ClusterSecurityGroup
+      SourceSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+
+  EKSClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSVPCResourceController
+
+  NodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        InstanceType: !Ref NodeInstanceType
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+          - !Ref NodeSecurityGroup
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: !Ref NodeDiskSize
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Environment
+                Value: !Ref Environment
+
+  NodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref EKSCluster
+      NodegroupName: !Sub ${ClusterName}-workers
+      NodeRole: !GetAtt NodeInstanceRole.Arn
+      Subnets: !Ref SubnetIds
+      LaunchTemplate:
+        Id: !Ref NodeLaunchTemplate
+        Version: !GetAtt NodeLaunchTemplate.LatestVersionNumber
+      ScalingConfig:
+        MinSize: 2
+        DesiredSize: 2
+        MaxSize: 4
+      AmiType: AL2023_x86_64_STANDARD
+      Tags:
+        Environment: !Ref Environment
+      UpdateConfig:
+        MaxUnavailable: 1
+
+  NodeInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonEKSServicePolicy
+
+Outputs:
+  ClusterName:
+    Description: The name of the EKS cluster
+    Value: !Ref EKSCluster
+    Export:
+      Name: !Sub ${AWS::StackName}-cluster-name
+
+  ClusterEndpoint:
+    Description: The endpoint for the EKS cluster API server
+    Value: !GetAtt EKSCluster.Endpoint
+
+  ClusterSecurityGroupId:
+    Description: Security group for the cluster control plane
+    Value: !Ref ClusterSecurityGroup
+
+  NodeSecurityGroupId:
+    Description: Security group for the cluster nodes
+    Value: !Ref NodeSecurityGroup
+
+  NodeInstanceRole:
+    Description: The node instance role ARN
+    Value: !GetAtt NodeInstanceRole.Arn
+
+  ClusterOIDCIssuer:
+    Description: The OIDC provider URL for the cluster
+    Value: !GetAtt EKSCluster.OpenIdConnectIssuerUrl
+
+  KubernetesVersion:
+    Description: The running version of Kubernetes
+    Value: !Ref KubernetesVersion

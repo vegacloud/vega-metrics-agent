@@ -42,34 +42,37 @@ func GetVegaAuthToken(
 	client *http.Client,
 	cfg *config.Config,
 ) (string, error) {
+	// Check if the token is still valid
 	if time.Now().Before(tokenCache.expiresAt) {
 		return tokenCache.token, nil
 	}
+
+	authURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", cfg.AuthServiceURL, cfg.VegaOrgSlug)
 	logrus.WithFields(logrus.Fields{
 		"function": "GetVegaAuthToken",
 		"clientID": cfg.VegaClientID,
 		"slug":     cfg.VegaOrgSlug,
+		"url":      cfg.AuthServiceURL,
+		"authURL":  authURL,
 	}).Debug("Getting auth token")
 
-	authURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", cfg.AuthServiceURL, cfg.VegaOrgSlug)
-
 	form := url.Values{
-		"grant_type":    {"client_credentials"},
-		"client_id":     {cfg.VegaClientID},
-		"client_secret": {cfg.VegaClientSecret},
+		"grant_type":    []string{"client_credentials"},
+		"client_id":     []string{cfg.VegaClientID},
+		"client_secret": []string{cfg.VegaClientSecret},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, authURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", fmt.Errorf("error getting auth token for slug %s: %w", cfg.VegaOrgSlug, err)
+		return "", fmt.Errorf("error creating request for slug %s: %w", cfg.VegaOrgSlug, err)
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	var resp *http.Response
+
+	// Use a loop with a retry mechanism
 	for i := 0; i < 3; i++ {
-		resp, err = client.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
-			// Log the error for each failed attempt
 			logrus.WithFields(logrus.Fields{
 				"function": "GetVegaAuthToken",
 				"attempt":  i + 1,
@@ -77,46 +80,50 @@ func GetVegaAuthToken(
 			}).Warn("Failed to send request, retrying")
 
 			if i == 2 {
-				// Return the error if this is the last retry attempt
 				return "", fmt.Errorf("sending request after retries: %w", err)
 			}
 
-			// Small backoff before retrying
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
-		// Ensure we close the response body when done
-		defer resp.Body.Close()
-		break
-	}
 
-	// Handle non-2xx status codes by logging and returning an error
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		// Read and log the response body to provide context on failure
-		body, _ := io.ReadAll(resp.Body)
+		// Ensure response body is closed
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				logrus.WithError(err).Warn("Failed to close response body")
+			}
+		}()
+
+		// Handle non-2xx status codes
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			body, _ := io.ReadAll(resp.Body)
+			logrus.WithFields(logrus.Fields{
+				"function":   "GetVegaAuthToken",
+				"statusCode": resp.StatusCode,
+				"body":       string(body),
+			}).Error("Received non-2xx status code")
+			return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		}
+
+		// Decode the JSON response
+		var authResp AuthResponse
+		if err := json.NewDecoder(resp.Body).Decode(&authResp); err != nil {
+			return "", fmt.Errorf("decoding response for slug %s: %w", cfg.VegaOrgSlug, err)
+		}
+
 		logrus.WithFields(logrus.Fields{
-			"function":   "GetVegaAuthToken",
-			"statusCode": resp.StatusCode,
-			"body":       string(body),
-		}).Error("Received non-2xx status code")
-		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+			"function":    "GetVegaAuthToken",
+			"accessToken": authResp.AccessToken,
+			"expiresIn":   authResp.ExpiresIn,
+		}).Debug("Auth token obtained successfully")
+
+		// Cache the token
+		tokenCache.token = authResp.AccessToken
+		tokenCache.expiresAt = time.Now().Add(time.Duration(authResp.ExpiresIn) * time.Second)
+
+		return authResp.AccessToken, nil
 	}
 
-	// Decode the JSON response into the AuthResponse struct
-	var authResp AuthResponse
-	if err := json.NewDecoder(resp.Body).Decode(&authResp); err != nil {
-		return "", fmt.Errorf("decoding response for slug %s: %w", cfg.VegaOrgSlug, err)
-	}
-
-	// Log a success message with relevant context
-	logrus.WithFields(logrus.Fields{
-		"function":    "GetVegaAuthToken",
-		"accessToken": authResp.AccessToken,
-		"expiresIn":   authResp.ExpiresIn,
-	}).Debug("Auth token obtained successfully")
-
-	tokenCache.token = authResp.AccessToken
-	tokenCache.expiresAt = time.Now().Add(time.Duration(authResp.ExpiresIn) * time.Second)
-
-	return authResp.AccessToken, nil
+	// Return an error if all attempts fail
+	return "", fmt.Errorf("failed to obtain auth token after retries")
 }

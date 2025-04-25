@@ -148,6 +148,7 @@ type ClusterMetrics struct {
 	PodCount          int                          `json:"podCount"`
 	ContainerCount    int                          `json:"containerCount"`
 	KubernetesVersion string                       `json:"kubernetesVersion"`
+	ClusterProvider   string                       `json:"clusterProvider"`
 	NodeLabels        map[string]map[string]string `json:"nodeLabels"` // New field for node labels
 	PodLabels         map[string]map[string]string `json:"podLabels"`  // New field for pod labels
 	// ContainerLabels  map[string]map[string]string `json:"containerLabels"`

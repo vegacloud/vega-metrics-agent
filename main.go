@@ -31,8 +31,6 @@ import (
 	"github.com/vegacloud/kubernetes/metricsagent/pkg/utils"
 )
 
-var version = "999-snapshot"
-
 func main() {
 	time.Local = time.UTC
 
@@ -81,7 +79,7 @@ func runRootCmd(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to get 'version' flag: %w", err)
 	}
 	if versionFlag {
-		logrus.Infof("Vega Kubernetes and Container Metrics Agent version: %s", version)
+		logrus.Infof("Vega Kubernetes and Container Metrics Agent version: %s, Schema version: %s", config.DefaultAgentVersion, config.DefaultSchemaVersion)
 		return nil
 	}
 	requiredFlags := []string{"client_id", "client_secret", "org_slug", "cluster_name"}
@@ -90,6 +88,7 @@ func runRootCmd(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("failed to mark flag '%s' as required: %w", flag, err)
 		}
 	}
+
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
@@ -98,7 +97,7 @@ func runRootCmd(cmd *cobra.Command, _ []string) error {
 	initializeLogging(cfg)
 
 	logrus.WithFields(logrus.Fields{
-		"version":      version,
+		"version":      cfg.AgentVersion,
 		"client_id":    cfg.VegaClientID,
 		"org_slug":     cfg.VegaOrgSlug,
 		"cluster_name": cfg.VegaClusterName,
