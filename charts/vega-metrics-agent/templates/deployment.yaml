@@ -46,7 +46,7 @@ spec:
       {{- end }}
       initContainers:
         - name: wait-for-permissions
-          image: bitnami/kubectl:1.30.7
+          image: bitnamilegacy/kubectl:1.30.7
           command: ['sh', '-c', 'until kubectl auth can-i list pods --all-namespaces; do echo waiting for permissions; sleep 2; done']
       containers:
         - name: metrics-agent

@@ -206,28 +206,28 @@ tolerations:
 
 #### Helm Chart Parameters
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `vega.clientId` | Client ID for authentication with Vega Cloud API | Required |
-| `vega.clientSecret` | Client Secret for authentication with Vega Cloud API | Required |
-| `vega.orgSlug` | Your Vega Cloud Organization slug | Required |
-| `vega.clusterName` | Unique name for your Kubernetes cluster | Required |
-| `apiRateLimiting.qps` | Kubernetes API requests per second | 100 |
-| `apiRateLimiting.burst` | Maximum burst of API requests allowed | 100 |
-| `apiRateLimiting.timeout` | API request timeout in seconds | 10 |
-| `maxConcurrency` | Maximum concurrent collector operations | 8 |
-| `resources.requests.memory` | Memory request for the agent | "2Gi" |
-| `resources.requests.cpu` | CPU request for the agent | "500m" |
-| `resources.limits.memory` | Memory limit for the agent | "4Gi" |
-| `resources.limits.cpu` | CPU limit for the agent | "1000m" |
-| `replicaCount` | Number of agent replicas to run | 1 |
+| Parameter | Description | Default                                              |
+|-----------|-------------|------------------------------------------------------|
+| `vega.clientId` | Client ID for authentication with Vega Cloud API | Required                                             |
+| `vega.clientSecret` | Client Secret for authentication with Vega Cloud API | Required                                             |
+| `vega.orgSlug` | Your Vega Cloud Organization slug | Required                                             |
+| `vega.clusterName` | Unique name for your Kubernetes cluster | Required                                             |
+| `apiRateLimiting.qps` | Kubernetes API requests per second | 100                                                  |
+| `apiRateLimiting.burst` | Maximum burst of API requests allowed | 100                                                  |
+| `apiRateLimiting.timeout` | API request timeout in seconds | 10                                                   |
+| `maxConcurrency` | Maximum concurrent collector operations | 8                                                    |
+| `resources.requests.memory` | Memory request for the agent | "2Gi"                                                |
+| `resources.requests.cpu` | CPU request for the agent | "500m"                                               |
+| `resources.limits.memory` | Memory limit for the agent | "4Gi"                                                |
+| `resources.limits.cpu` | CPU limit for the agent | "1000m"                                              |
+| `replicaCount` | Number of agent replicas to run | 1                                                    |
 | `image.repository` | Agent container image repository | public.ecr.aws/c0f8b9o4/vegacloud/vega-metrics-agent |
-| `image.tag` | Agent container image tag | 1.1.4 |
-| `image.pullPolicy` | Container image pull policy | Always |
-| `nodeSelector` | Node labels for pod assignment | `{}` |
-| `affinity` | Pod affinity/anti-affinity rules | `{}` |
-| `tolerations` | Pod tolerations for scheduling | `[]` |
-| `env` | Additional environment variables to set in the container | `{}` |
+| `image.tag` | Agent container image tag | 1.1.5                                                |
+| `image.pullPolicy` | Container image pull policy | Always                                               |
+| `nodeSelector` | Node labels for pod assignment | `{}`                                                 |
+| `affinity` | Pod affinity/anti-affinity rules | `{}`                                                 |
+| `tolerations` | Pod tolerations for scheduling | `[]`                                                 |
+| `env` | Additional environment variables to set in the container | `{}`                                                 |
 
 **Note**: If you do not specify the API rate limiting or concurrency parameters, the agent will use its built-in defaults, which are optimized for most use cases. For complex configurations like `affinity` and `tolerations`, using a custom values file (`-f values.yaml`) is recommended over multiple `--set` flags.
 
