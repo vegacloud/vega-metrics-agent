@@ -14,6 +14,20 @@ VERSION = $(shell cat pkg/config/VERSION)
 DOCKER_IMAGE_DEV = public.ecr.aws/c0f8b9o4/vegacloud/${APPLICATION}-test
 GOLANG_VERSION ?= 1.23
 
+# Detect if we're using podman or docker
+# Check if docker command exists and if it's actually podman emulating docker
+CONTAINER_RUNTIME := $(shell if command -v docker >/dev/null 2>&1; then \
+	if docker --version 2>&1 | grep -qi podman; then \
+		echo "podman"; \
+	else \
+		echo "docker"; \
+	fi; \
+elif command -v podman >/dev/null 2>&1; then \
+	echo "podman"; \
+else \
+	echo "docker"; \
+fi)
+
 # Go commands
 GO_BUILD = CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/amd64/${APPLICATION}
 GO_BUILD_ARM = CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/arm64/${APPLICATION}
@@ -24,21 +38,59 @@ GO_SEC = ${HOME}/go/bin/gosec ./...
 GO_TEST = go test ./...
 GO_VET = go vet ./...
 
-# Docker commands
-DOCKER_BUILD = docker buildx build -f Dockerfile \
-	--build-arg golang_version=${GOLANG_VERSION} \
-	--build-arg app_version=${VERSION} \
-	--platform linux/amd64,linux/arm64 \
-	-t ${DOCKER_IMAGE}:${VERSION} \
-	-t ${DOCKER_IMAGE}:latest  \
-        --push .
+# Docker/Podman commands (defined conditionally based on runtime)
+ifeq ($(CONTAINER_RUNTIME),podman)
+    # Use buildah for multi-architecture builds with Podman
+    # Buildah works better with QEMU for cross-platform builds
+    DOCKER_BUILD = buildah manifest rm ${DOCKER_IMAGE}:${VERSION} 2>/dev/null || true && \
+	buildah manifest rm ${DOCKER_IMAGE}:latest 2>/dev/null || true && \
+	buildah manifest create ${DOCKER_IMAGE}:${VERSION} && \
+	buildah manifest create ${DOCKER_IMAGE}:latest && \
+	buildah bud --arch amd64 \
+		--build-arg golang_version=${GOLANG_VERSION} \
+		--manifest ${DOCKER_IMAGE}:${VERSION} \
+		-f Dockerfile . && \
+	buildah bud --arch arm64 \
+		--build-arg golang_version=${GOLANG_VERSION} \
+		--manifest ${DOCKER_IMAGE}:${VERSION} \
+		-f Dockerfile . && \
+	buildah bud --arch amd64 \
+		--build-arg golang_version=${GOLANG_VERSION} \
+		--manifest ${DOCKER_IMAGE}:latest \
+		-f Dockerfile . && \
+	buildah bud --arch arm64 \
+		--build-arg golang_version=${GOLANG_VERSION} \
+		--manifest ${DOCKER_IMAGE}:latest \
+		-f Dockerfile . && \
+	buildah manifest push --all ${DOCKER_IMAGE}:${VERSION} docker://${DOCKER_IMAGE}:${VERSION} && \
+	buildah manifest push --all ${DOCKER_IMAGE}:latest docker://${DOCKER_IMAGE}:latest
 
-DOCKER_BUILD_DEV = docker buildx build -f Dockerfile \
-	--build-arg golang_version=${GOLANG_VERSION} \
-	--build-arg app_version=${VERSION} \
-	--platform linux/amd64,linux/arm64 \
-	-t ${DOCKER_IMAGE_DEV}:${VERSION} \
-        --push .
+    DOCKER_BUILD_DEV = buildah manifest rm ${DOCKER_IMAGE_DEV}:${VERSION} 2>/dev/null || true && \
+	buildah manifest create ${DOCKER_IMAGE_DEV}:${VERSION} && \
+	buildah bud --arch amd64 \
+		--build-arg golang_version=${GOLANG_VERSION} \
+		--manifest ${DOCKER_IMAGE_DEV}:${VERSION} \
+		-f Dockerfile . && \
+	buildah bud --arch arm64 \
+		--build-arg golang_version=${GOLANG_VERSION} \
+		--manifest ${DOCKER_IMAGE_DEV}:${VERSION} \
+		-f Dockerfile . && \
+	buildah manifest push --all ${DOCKER_IMAGE_DEV}:${VERSION} docker://${DOCKER_IMAGE_DEV}:${VERSION}
+else
+    # Use docker buildx for multi-platform builds
+    DOCKER_BUILD = docker buildx build -f Dockerfile \
+		--build-arg golang_version=${GOLANG_VERSION} \
+		--platform linux/amd64,linux/arm64 \
+		-t ${DOCKER_IMAGE}:${VERSION} \
+		-t ${DOCKER_IMAGE}:latest  \
+		--push .
+
+    DOCKER_BUILD_DEV = docker buildx build -f Dockerfile \
+		--build-arg golang_version=${GOLANG_VERSION} \
+		--platform linux/amd64,linux/arm64 \
+		-t ${DOCKER_IMAGE_DEV}:${VERSION} \
+		--push .
+endif
 
 
 # Default target
@@ -92,17 +144,29 @@ build:
 	${GO_BUILD}
 	${GO_BUILD_ARM}
 
+# Check which container runtime is detected
+.PHONY: check-runtime
+check-runtime:
+	@echo "Detected container runtime: ${CONTAINER_RUNTIME}"
+ifeq ($(CONTAINER_RUNTIME),podman)
+	@echo "Build tool: buildah (for multi-architecture support)"
+	@echo "Platforms: linux/amd64, linux/arm64"
+else
+	@echo "Build tool: docker buildx"
+	@echo "Platforms: linux/amd64, linux/arm64"
+endif
+
 # Build Docker image
 .PHONY: docker-build
-docker-build:
-	@echo "Building Docker image..."
+docker-build: check-runtime
+	@echo "Building Docker image using ${CONTAINER_RUNTIME}..."
 	${DOCKER_BUILD}
 
 
 # Build Docker image
 .PHONY: docker-build-dev
-docker-build-dev:
-	@echo "Building Docker dev image..."
+docker-build-dev: check-runtime
+	@echo "Building Docker dev image using ${CONTAINER_RUNTIME}..."
 	${DOCKER_BUILD_DEV}
 
 
@@ -127,12 +191,18 @@ clean:
 help:
 	@echo "Usage:"
 	@echo "  make all              - Format, vet, lint, sec, test, build locally, and build the Docker image"
+	@echo "  make alldev           - Format, vet, lint, sec, build locally, and build the Docker dev image"
+	@echo "  make alldevnosec      - Format, vet, lint, build locally, and build the Docker dev image (skip security checks)"
 	@echo "  make fmt              - Format the Go code"
 	@echo "  make lint             - Run Go linters"
 	@echo "  make sec              - Run security checks"
 	@echo "  make test             - Run Go tests"
 	@echo "  make vet              - Run Go vet"
 	@echo "  make build            - Build the Go application locally"
-	@echo "  make docker-build     - Build Docker image using Dockerfile"
-	@echo "  make docker-push      - Push Docker image to registry"
+	@echo "  make docker-build     - Build multi-arch Docker image (Docker: buildx, Podman: buildah)"
+	@echo "  make docker-build-dev - Build multi-arch Docker dev image (Docker: buildx, Podman: buildah)"
+	@echo "  make check-runtime    - Display container runtime and build tool information"
 	@echo "  make clean            - Clean build artifacts"
+	@echo ""
+	@echo "Note: Automatically detects Docker or Podman and uses appropriate build tool"
+	@echo "      Docker uses 'buildx', Podman uses 'buildah' for multi-architecture builds"
